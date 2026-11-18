@@ -962,10 +962,33 @@ test("idle remaps do not adopt the focused workspace", () => {
   expect(window).toContain('if (reason === "map" || reason === "monitor") return "return"');
   expect(window).toContain('runRestore("home", savedWorkspace)');
   expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
-  expect(window).toContain('["bun", win.restoreScript, "prepare", win.savedWorkspace]');
+  expect(window).toContain('["bun", win.restoreScript, "prepare", win.restoreTarget]');
+  expect(window).toContain("if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
   expect(window).toContain("/^Blip( \\([0-9]+\\))?$/.test(title)");
   expect(window).toContain("id: strayReturn");
   expect(window).toContain("sameAddress");
+});
+
+// A window the READER opened is an app being launched, not a remap: it opens
+// on their workspace (no restore target, stale home rule cleared) and that
+// workspace becomes home. Before, a stale home on a workspace the reader no
+// longer visited swallowed every launch (omadell, 2026-11-18).
+test("a launched window opens where the reader is and makes that its home", () => {
+  const service = readFileSync(new URL("./BlipService.qml", import.meta.url), "utf8");
+  // only ensureWindow (a show someone asked for) marks a launch; startup does not
+  expect(service).toContain("root.windowLaunchPending = true\n      windowLoader.active = true");
+  expect(service).toContain("item.launchedHere = root.windowLaunchPending");
+  expect(service.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(service.indexOf("item.hostWidget = root"));
+  // decided a turn after creation, once onLoaded has set launchedHere
+  expect(window).toContain("Qt.callLater(function() { win.beginRestore(wasOpen) })");
+  expect(window).toContain('if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }');
+  // the first workspace a launched window lands on is saved as home, once,
+  // before any stray-return logic can send it back
+  const adopt = window.slice(window.indexOf("function adoptLaunchWorkspace("), window.indexOf("function applyWorkspaceDecision("));
+  expect(adopt).toContain("if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false");
+  expect(adopt).toContain('applyWorkspaceDecision(incoming, "move", addr)');
+  const changed = window.slice(window.indexOf("onCurrentWorkspaceChanged: {"), window.indexOf("id: strayReturn"));
+  expect(changed.indexOf("adoptLaunchWorkspace(currentWorkspace, ourAddress())")).toBeLessThan(changed.indexOf("strayReturn.restart()"));
 });
 
 // Esc over the share sheet closes the sheet; a stale search never stays clickable;

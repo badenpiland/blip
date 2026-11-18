@@ -343,8 +343,15 @@ Item {
     id: windowLoader
     active: root.leader                // created at start so it can self-restore
     source: Qt.resolvedUrl("BlipWindow.qml")
-    onLoaded: item.hostWidget = root
+    onLoaded: {
+      // A window created for a show the reader asked for opens on THEIR
+      // workspace; one created by the shell itself (startup) restores home.
+      item.launchedHere = root.windowLaunchPending
+      root.windowLaunchPending = false
+      item.hostWidget = root
+    }
   }
+  property bool windowLaunchPending: false
   readonly property bool windowVisible: windowLoader.item ? windowLoader.item.visible === true : false
   function hideWindow() {
     if (!windowLoader.item) return
@@ -357,6 +364,7 @@ Item {
     // covers a window the compositor closed (SUPER+M hide path).
     if (windowLoader.item && !windowLoader.item.visible) windowLoader.active = false
     if (!windowLoader.active) {
+      root.windowLaunchPending = true
       windowLoader.active = true
       root.refresh(true, false)          // full list, like the panel
     }

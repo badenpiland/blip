@@ -73,6 +73,16 @@ FloatingWindow {
   property bool restoreReady: false
   property bool explicitShow: false
   property string savedWorkspace: ""
+  // Set by BlipService when the READER opened this window (launcher, SUPER+M,
+  // double-click, a toast): it opens on the workspace they are looking at, and
+  // that workspace becomes its home, like any app. Only a window the shell
+  // brings back on its own (startup restore, a screen remap) is sent home.
+  // Before this a launch went through the same restore as a shell restart:
+  // the saved home's compositor rule put it on that workspace, and a home the
+  // reader no longer visited made the app vanish (omadell, 2026-11-18).
+  property bool launchedHere: false
+  property bool adoptedLaunchWorkspace: false
+  property string restoreTarget: ""
   // Match this shell process and this exact window, never another app's title.
   readonly property var ownToplevel: Hyprland.toplevels.values.find(function(t) {
     return Number(t.lastIpcObject.pid) === Quickshell.processId && t.title === win.title
@@ -117,6 +127,13 @@ FloatingWindow {
     }
     return false
   }
+  /** A launched window's first workspace is a deliberate choice: a home. */
+  function adoptLaunchWorkspace(incoming, addr) {
+    if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false
+    adoptedLaunchWorkspace = true
+    applyWorkspaceDecision(incoming, "move", addr)
+    return true
+  }
   function applyWorkspaceDecision(incoming, reason, addr) {
     if (restoring) return
     var decision = workspaceDecision(incoming, reason)
@@ -138,7 +155,8 @@ FloatingWindow {
       if (name === "openwindow") {
         var open = win.eventParts(event, 4)
         var title = String(open[3] || "")
-        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title))
+        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title)
+            && !win.adoptLaunchWorkspace(String(open[1] || ""), String(open[0] || "")))
           win.applyWorkspaceDecision(String(open[1] || ""), "map", String(open[0] || ""))
       } else if (name === "movewindowv2") {
         var moved = win.eventParts(event, 3)
@@ -153,6 +171,7 @@ FloatingWindow {
   }
   onCurrentWorkspaceChanged: {
     if (restoring || currentWorkspace === "") return
+    if (adoptLaunchWorkspace(currentWorkspace, ourAddress())) return
     if (savedWorkspace === "") applyWorkspaceDecision(currentWorkspace, "map", ourAddress())
     else if (currentWorkspace !== savedWorkspace) strayReturn.restart()
   }
@@ -174,7 +193,7 @@ FloatingWindow {
   }
   Process {
     id: prepareRestore
-    command: ["bun", win.restoreScript, "prepare", win.savedWorkspace]
+    command: ["bun", win.restoreScript, "prepare", win.restoreTarget]
     stdout: StdioCollector {
       onStreamFinished: {
         try { win.restorationTitle = JSON.parse(text).title || "" } catch (e) { }
@@ -205,13 +224,24 @@ FloatingWindow {
       "blip", stateDir, j])
   }
   Component.onCompleted: {
+    var wasOpen = false
     try {
       var d = JSON.parse(winState.text())
       if (d && d.width >= 720 && d.height >= 480) { implicitWidth = d.width; implicitHeight = d.height }
       if (d && typeof d.workspace === "string") savedWorkspace = d.workspace
-      if (d && d.visible === true) { prepareRestore.running = true; return }
+      wasOpen = !!d && d.visible === true
     } catch (e) { /* first run */ }
-    Qt.callLater(function() { win.restoring = false; win.restoreReady = true; if (win.explicitShow) win.visible = true })
+    // Decided a turn later: BlipService sets launchedHere in the Loader's
+    // onLoaded, which runs after this handler.
+    Qt.callLater(function() { win.beginRestore(wasOpen) })
+  }
+  function beginRestore(wasOpen) {
+    // A launch: open where the reader is (no target), clearing any stale home
+    // rule, through the same quiet path so the window maps under a restore
+    // title no old rule can match.
+    if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }
+    if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }
+    restoring = false; restoreReady = true; if (explicitShow) visible = true
   }
   onVisibleChanged: { saveWinState(); if (visible) Qt.callLater(view.focusDefault) }
   onWidthChanged: if (visible) saveWinState()

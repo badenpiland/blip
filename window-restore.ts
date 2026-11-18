@@ -52,6 +52,20 @@ export function homeRule(workspace: unknown): string {
   return `hl.window_rule({ name = "blip-session-home", match = { class = ${luaString("^org\\.quickshell$")}, title = ${luaString("^Blip( \\([0-9]+\\))?$")} }, no_initial_focus = true${target ? `, workspace = ${luaString(target + " silent")}` : ""} })`;
 }
 
+/**
+ * The compositor rules a restore installs, in order. With a target: open there
+ * quietly and keep it as home. With none — a dead home, or a window the reader
+ * opened themselves — open where the reader is AND clear the home rule: the
+ * named rule outlives the plugin until Hyprland reloads, so a stale one (a home
+ * on a workspace the reader no longer visits) sent every launch there, and the
+ * window "vanished" the moment the reader looked elsewhere (omadell, 2026-11-18).
+ */
+export function prepareRules(workspace: unknown, title: string): string[] {
+  const rules = [restoreRule(workspace, title)];
+  rules.push(homeRule(workspaceSelector(workspace) ? workspace : undefined));
+  return rules;
+}
+
 export function silentMove(workspace: unknown, address: unknown): string | null {
   const target = workspaceSelector(workspace);
   const addr = windowAddress(address);
@@ -147,15 +161,16 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  const asked = action === "prepare" ? process.argv[3] : action;
+  const asked = action === "prepare" ? (process.argv[3] ?? "") : action;
   // A home that no longer exists is not a home. Opening here beats creating it.
   const workspace = workspaceSelector(asked) && !workspaceLives(asked, liveWorkspaces()) ? "" : asked;
   const title = `Blip-restore-${randomUUID()}`;
-  if (!hyprEval(restoreRule(workspace, title))) {
+  const [restore, home] = prepareRules(workspace, title);
+  if (!hyprEval(restore)) {
     console.error("Blip could not prepare quiet window restoration");
     process.exit(1);
   }
-  if (workspaceSelector(workspace) && !hyprEval(homeRule(workspace))) {
+  if (!hyprEval(home)) {
     console.error("Blip could not keep the window on its workspace");
     process.exit(1);
   }

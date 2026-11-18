@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   hasRealMonitor,
   moveIsSafe,
+  prepareRules,
   workspaceLives,
   homeRule,
   isLiveBlipTitle,
@@ -112,4 +113,15 @@ test("a floating move waits until the target workspace has a live monitor", () =
   expect(moveIsSafe("1", [{ name: "FALLBACK", width: 1920, height: 1080 }], orphaned)).toBe(false);
   expect(moveIsSafe("1", dp1, null)).toBe(false);
   expect(moveIsSafe("", dp1, homed)).toBe(false);
+});
+
+test("a restore with no target clears the home rule instead of leaving a stale one", () => {
+  const [restore, home] = prepareRules("", "Blip-restore-abcd");
+  expect(restore).not.toContain("workspace =");
+  expect(home).toContain('name = "blip-session-home"');
+  expect(home).not.toContain("workspace =");
+  const [r2, h2] = prepareRules("4", "Blip-restore-abcd");
+  expect(r2).toContain("workspace =");
+  expect(h2).toBe(homeRule("4"));
+  expect(prepareRules(undefined, "Blip-restore-abcd")[1]).toBe(homeRule(undefined));
 });
