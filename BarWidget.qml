@@ -334,6 +334,48 @@ BarWidget {
   // Both now go through openOn(): the leader re-anchors to the asked-for
   // screen, a follower forwards by IPC exactly like a click on its icon does.
   function open() { root.openOn(root.ownScreen ? String(root.ownScreen.name) : "") }
+
+  // ---- which surface Blip opens as: the popout (as released) or the app
+  // window, the header's "Keep Blip as a window" toggle. The LAST choice wins
+  // on every start: state in ~/.local/state/blip/surface.json, owned by
+  // blip-surface.ts (hardened like panel.json), read here. No file = popout.
+  // In window mode every "open Blip" — the icon's click, the Omarchy panel
+  // hotkey, a toast — opens or focuses the window; the popout is still one
+  // click on the header's toggle away.
+  property string surface: "popout"
+  readonly property bool windowSurface: surface === "window"
+  readonly property string surfaceScript:
+    decodeURIComponent(Qt.resolvedUrl("blip-surface.ts").toString().replace(/^file:\/\//, ""))
+  /** Same contract as parseSurface() in blip-surface.ts: only an exact value counts. */
+  function parseSurface(text) {
+    try {
+      var d = JSON.parse(String(text || ""))
+      if (d && (d.surface === "popout" || d.surface === "window")) return d.surface
+    } catch (e) { }
+    return "popout"
+  }
+  FileView {
+    id: surfaceFile
+    path: root.home + "/.local/state/blip/surface.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.surface = root.parseSurface(text())
+    onLoadFailed: root.surface = "popout"
+  }
+  /** The header's toggle (and IPC `surface`). Saves, then switches at once:
+   *  to the window (the popout closes behind it), or back to the popout (the
+   *  window closes, the popout opens from the icon). */
+  function setSurface(s) {
+    if (s !== "popout" && s !== "window") return false
+    Quickshell.execDetached(["bun", root.surfaceScript, s])
+    root.surface = s
+    if (s === "window") root.showApp()
+    // A turn later: the click that asked for this ran INSIDE the window, which
+    // hideWindow() destroys.
+    else Qt.callLater(function() { root.hideWindow(); root.open() })
+    return true
+  }
   function close() {
     if (panelLoader.item) panelLoader.item.close()
     else if (!root.leader) Quickshell.execDetached(["qs", "-p", root.shellRoot, "ipc", "call", root.moduleName, "close"])
@@ -358,6 +400,7 @@ BarWidget {
     p.anchorItem = w.anchorButton
   }
   function toggleOn(screenName) {
+    if (root.windowSurface && root.leader) { root.showApp(); return }
     var p = panelLoader.item
     if (!p) return
     if (!p.opened) root.anchorPanel(p, screenName)
@@ -370,6 +413,7 @@ BarWidget {
       Quickshell.execDetached(["qs", "-p", root.shellRoot, "ipc", "call", root.moduleName, "openon", screenName])
       return
     }
+    if (root.windowSurface) { root.showApp(); return }
     var p = panelLoader.item
     if (!p) return
     if (!p.opened) root.anchorPanel(p, screenName)
@@ -384,8 +428,11 @@ BarWidget {
   function show(chat) {
     var raw = String(chat === undefined || chat === null ? "" : chat).trim()
     if (raw === "" || !/^[A-Za-z0-9._@:;$-]{1,256}$/.test(raw)) return false
-    if (!panelLoader.item) return false
-    panelLoader.item.open()
+    // Window mode: the conversation opens in the window (created if needed).
+    var inWindow = root.windowSurface
+    if (!inWindow && !panelLoader.item) return false
+    if (inWindow) root.showApp()
+    else panelLoader.item.open()
     // `qs ipc call` rejects a leading "+" as a flag, so accept the bare digits too.
     // Exact match FIRST, alias second: when both variants exist as threads,
     // the alias must never shadow the exact one (Codex HIGH, 1.2.0).
@@ -400,7 +447,9 @@ BarWidget {
     // Only a FULL number gets a "+": short codes (99123) are their own chat id.
     if (!t && /^[0-9]{10,}$/.test(want)) want = "+" + want
     // Unknown to the current window: still open it, with the id as the name.
-    panelLoader.item.openThread(t || { chat: want, handle: want, name: want })
+    var target = t || { chat: want, handle: want, name: want }
+    if (inWindow) Qt.callLater(function() { if (windowLoader.item) windowLoader.item.openThread(target) })
+    else panelLoader.item.openThread(target)
     return true
   }
 
@@ -512,6 +561,12 @@ BarWidget {
   // click within the double-click window = close the panel and open the APP.
   Timer { id: dblClick; interval: 320 }
   function leftClick() {
+    // Window mode: a click opens or focuses the app, like a dock icon.
+    if (root.windowSurface) {
+      if (root.leader) root.showApp()
+      else Quickshell.execDetached(["qs", "-p", root.shellRoot, "ipc", "call", root.moduleName, "app"])
+      return
+    }
     if (!root.leader) {
       // a follower bar: ask the leader (only it answers IPC)
       if (dblClick.running) { dblClick.stop(); Quickshell.execDetached(["qs", "-p", root.shellRoot, "ipc", "call", root.moduleName, "app"]); return }
@@ -1295,6 +1350,7 @@ BarWidget {
         + " window=" + (w && w.visible ? (w.focused ? "focused" : "unfocused") : "hidden")
         + " threads=" + root.threads.length + " healthy=" + root.healthy
         + " watch=" + root.watchAlive
+        + " surface=" + root.surface
         + " read_push=" + (root.readPush !== "" ? root.readPush : "?")
         + (root.macSession === "signed-out" ? " mac_session=signed-out" : "")
         + " autofill=" + (root.otpAutofill ? (otp.ready ? "ready" : "starting") : "off")
@@ -1329,6 +1385,9 @@ BarWidget {
     function newchat(query: string): string { if (!root.automationOn) return root.automationOff; return panelLoader.item ? panelLoader.item.newChatFor(query) : "no panel" }
     function window(): string { return root.toggleWindow() ? "window shown" : "window hidden" }
     function app(): string { root.showApp(); return "app shown + focused" }
+    /** The header's "Keep Blip as a window" toggle: popout | window. No content. */
+    function surface(s: string): string { return root.setSurface(s) ? "surface=" + s : "unknown surface — use popout or window" }
+    function getsurface(): string { return root.surface }
     function windowgoto(chat: string): string {
       if (!root.automationOn) return root.automationOff
       root.ensureWindow()
@@ -1356,6 +1415,7 @@ BarWidget {
         parts.push("  " + hot[i].name + " (" + hot[i].unread + ")")
     }
     if (root.online && !root.healthy && root.lastError !== "") parts.push("⚠ " + root.lastError)
+    if (root.windowSurface) return parts.join("\n") + "\nclick: Blip window · middle: refresh · right: mark all read"
     return parts.join("\n") + "\nclick: threads · double-click: app · middle: refresh · right: mark all read"
   }
 

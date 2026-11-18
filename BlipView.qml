@@ -287,6 +287,19 @@ FocusScope {
     if (!hostWidget) return
     if (typeof hostWidget.showApp === "function") hostWidget.showApp()
   }
+  /** The header's surface toggle. The host saves the choice (it wins on every
+   *  start) and switches: popout → "Keep Blip as a window", window → "Back to
+   *  the popout". A host without the toggle just opens the window, as before. */
+  readonly property bool canToggleSurface: !!hostWidget && typeof hostWidget.setSurface === "function"
+  function keepAsWindow() {
+    closeShare()
+    if (canToggleSurface) hostWidget.setSurface("window")
+    else openApp()
+  }
+  function backToPopout() {
+    closeShare()
+    if (canToggleSurface) hostWidget.setSurface("popout")
+  }
   /** The sheet's keys: Esc closes, ←/→ step links, ↑/↓ move the highlight,
    *  Enter takes it, 1/2/3 pick directly. Anything else falls through to the
    *  field (a sheet over a draft never blocks typing); see openShare for
@@ -2654,14 +2667,26 @@ FocusScope {
             onClicked: root.startNew()
           }
           PanelActionButton {
-            visible: root.online && !root.splitView
+            objectName: "blipKeepAsWindow"
+            visible: !root.splitView
             iconText: "⇱"
-            tooltipText: "Open the app window"
+            tooltipText: "Keep Blip as a window"
             bordered: true
             foreground: root.foreground
             hoverColor: root.accent
             fontFamily: root.fontFamily
-            onClicked: root.openApp()
+            onClicked: root.keepAsWindow()
+          }
+          PanelActionButton {
+            objectName: "blipBackToPopout"
+            visible: root.splitView && root.canToggleSurface
+            iconText: "⇲"
+            tooltipText: "Back to the popout"
+            bordered: true
+            foreground: root.foreground
+            hoverColor: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.backToPopout()
           }
         }
 
