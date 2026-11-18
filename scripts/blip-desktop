@@ -65,19 +65,40 @@ if ! cmp -s "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"; then
   install -m 0644 "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"
 fi
 
-running() { qs -p "$runtime" ipc show >/dev/null 2>&1; }
+# An instance exists (exit 255 when there is none) ...
+instance_up() { qs -p "$runtime" ipc show >/dev/null 2>&1; }
+# ... and it is Blip: a copy whose service failed to load is up but has no
+# target, and counting it as running kept a broken Blip Desktop forever.
+answering() { qs -p "$runtime" ipc show 2>/dev/null | grep -qx 'target nixfred.blip'; }
+# What a running Blip Desktop was started from. It is deliberately untouched
+# by shell restarts, so a plugin update would otherwise never reach it: a
+# changed stamp means restart it. Only the code the process loads counts (QML
+# and its JS modules); the .ts helpers run fresh on every call anyway.
+code_stamp() {
+  { printf '%s\n' "$omarchy_shell"
+    find "$plugin_dir" -maxdepth 2 -type f \( -name '*.qml' -o -name '*.mjs' -o -name '*.js' \) \
+      -not -path '*/node_modules/*' -not -path '*/scripts/*' -print0 | sort -z | xargs -0 sha256sum
+  } | sha256sum | cut -c1-64
+}
 
 # One start at a time. `-n` alone is not enough: `-d` returns before the new
 # instance has registered, so two starts a few ms apart (the mode button's
 # hand-over and the mode file's watcher) both got through and ran two Blip
 # Desktops (omadell, 2026-11-18). The lock is held until the instance answers.
 exec 9>"$runtime/.start.lock"
-flock -w 15 9 || { echo "blip-desktop: another start is stuck" >&2; exit 75; }
-if ! running; then
+flock -w 20 9 || { echo "blip-desktop: another start is stuck" >&2; exit 75; }
+stamp="$(code_stamp)"
+if instance_up && { ! answering || [[ "$(cat "$runtime/.stamp" 2>/dev/null)" != "$stamp" ]]; }; then
+  # Broken, or older code than the plugin now holds: replace it.
+  qs kill -p "$runtime" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do instance_up || break; sleep 0.1; done
+fi
+if ! instance_up; then
   # -n: never a second instance. -d: detached, so it outlives whatever started
   # it (the launcher entry, the bar plugin, a terminal).
   BLIP_PLUGIN_DIR="$plugin_dir" qs -p "$runtime" -n -d >/dev/null 2>&1 || true
-  for _ in $(seq 1 40); do running && break; sleep 0.15; done
+  for _ in $(seq 1 40); do answering && break; sleep 0.15; done
+  printf '%s\n' "$stamp" > "$runtime/.stamp"
 fi
 flock -u 9
 

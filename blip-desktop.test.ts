@@ -11,19 +11,25 @@ const root = new URL("./", import.meta.url).pathname;
 const script = join(root, "scripts/blip-desktop");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
 
-function run(args: string[], opts: { ipcAnswers?: boolean; alreadyRunning?: boolean; dir?: string } = {}) {
-  const { ipcAnswers = true, alreadyRunning = false } = opts;
+function run(args: string[], opts: { ipcAnswers?: boolean; alreadyRunning?: boolean; broken?: boolean; stamp?: string; dir?: string } = {}) {
+  const { ipcAnswers = true, alreadyRunning = false, broken = false } = opts;
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "blip-desktop-"));
   const omarchy = join(dir, "omarchy/shell");
   mkdirSync(join(omarchy, "Commons"), { recursive: true });
   mkdirSync(join(omarchy, "Ui"), { recursive: true });
   // A fake qs: `-n -d` "starts" an instance (and records the plugin path it
   // was given), `ipc show` answers only once one is up, like the real one.
-  if (alreadyRunning) writeFileSync(join(dir, "running"), "");
+  // `broken`: an instance that is up but whose Blip never loaded (no target).
+  if (alreadyRunning) writeFileSync(join(dir, "running"), broken ? "broken" : "");
+  if (opts.stamp !== undefined) {
+    mkdirSync(join(dir, "data/blip/desktop"), { recursive: true });
+    writeFileSync(join(dir, "data/blip/desktop/.stamp"), opts.stamp + "\n");
+  }
   writeFileSync(join(dir, "qs"), `#!/bin/sh
 case "$*" in
-  *"ipc show"*) [ -e "$FIXTURE/running" ] && exit 0; exit 255 ;;
-  *"-n -d"*) printf '%s BLIP_PLUGIN_DIR=%s\\n' "$*" "$BLIP_PLUGIN_DIR" >> "$FIXTURE/qs-calls"; touch "$FIXTURE/running"; exit 0 ;;
+  *"ipc show"*) [ -e "$FIXTURE/running" ] || exit 255; grep -q broken "$FIXTURE/running" || echo "target nixfred.blip"; exit 0 ;;
+  "kill -p"*) printf 'kill\\n' >> "$FIXTURE/qs-calls"; rm -f "$FIXTURE/running"; exit 0 ;;
+  *"-n -d"*) printf '%s BLIP_PLUGIN_DIR=%s\\n' "$*" "$BLIP_PLUGIN_DIR" >> "$FIXTURE/qs-calls"; : > "$FIXTURE/running"; exit 0 ;;
   *"ipc call"*) printf '%s\\n' "$*" >> "$FIXTURE/qs-calls"; ${ipcAnswers ? 'echo "app shown + focused"' : "exit 1"} ;;
 esac
 exit 0
@@ -57,9 +63,27 @@ describe("blip-desktop: assemble and run Blip Desktop", () => {
     const r = run(["start"]);
     try { expect(r.calls).toEqual([`-p ${r.runtime} -n -d BLIP_PLUGIN_DIR=${plugin}`]); } finally { r.done(); }
   });
-  test("a second start while one is up starts nothing (the two-instance race)", () => {
-    const r = run(["start"], { alreadyRunning: true });
-    try { expect(r.calls).toEqual([]); } finally { r.done(); }
+  test("a second start while an up-to-date one is answering starts nothing (the two-instance race)", () => {
+    const first = run(["start"]);
+    try {
+      const stamp = readFileSync(join(first.runtime, ".stamp"), "utf8").trim();
+      expect(stamp).toMatch(/^[0-9a-f]{64}$/);
+      // same machine, same plugin, same Omarchy: the running copy is current
+      rmSync(join(first.dir, "qs-calls"), { force: true });
+      const again = run(["start"], { alreadyRunning: true, dir: first.dir });
+      expect(again.calls).toEqual([]);
+    } finally { first.done(); }
+  });
+  test("a copy that is up but never loaded Blip is replaced, not counted as running", () => {
+    const first = run(["start"]);
+    const stamp = readFileSync(join(first.runtime, ".stamp"), "utf8").trim();
+    first.done();
+    const r = run(["start"], { alreadyRunning: true, broken: true, stamp });
+    try { expect(r.calls).toEqual(["kill", `-p ${r.runtime} -n -d BLIP_PLUGIN_DIR=${plugin}`]); } finally { r.done(); }
+  });
+  test("a plugin update reaches a running Blip Desktop: older code is restarted", () => {
+    const r = run(["start"], { alreadyRunning: true, stamp: "0".repeat(64) });
+    try { expect(r.calls).toEqual(["kill", `-p ${r.runtime} -n -d BLIP_PLUGIN_DIR=${plugin}`]); } finally { r.done(); }
   });
   test("an old link to the plugin inside the config is removed", () => {
     const first = run(["start"]);
