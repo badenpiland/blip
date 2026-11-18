@@ -165,17 +165,8 @@ Linux side. If the Mac is asleep, the widget dims and says so.
   it too. On a multi-monitor bar the panel lives on the first screen's copy.
 
 **The app**
-- **Blip** in the app launcher (installed by `blip-setup`: it runs
-  `~/bin/blip-app`, which focuses the window or opens it), double-click the bar
-  icon, press `SUPER+M`, or IPC `app` for a Messages-style window (IPC `window`
-  is a plain toggle). It opens on the workspace you are on and stays wherever
-  you put it; Blip only puts it back on its last workspace after a shell
-  restart or when the screen wakes.
-- **⇱ Keep Blip as a window** in the popout's header makes the window Blip's
-  surface: the bar icon, the Omarchy panel hotkey and a toast's click then open
-  or focus the window, like an app. **⇲ Back to the popout** in the window's
-  header undoes it. The last choice is remembered across restarts
-  (`~/.local/state/blip/surface.json`); IPC `surface popout|window` does the same. For the keybind, add
+- double-click the bar icon, press `SUPER+M`, or IPC `app` for a
+  Messages-style window (IPC `window` is a plain toggle). For the keybind, add
   this to `~/.config/hypr/bindings.lua` — it asks **Hyprland** where the
   window is (front → close, elsewhere → focus, none → create) instead of
   the plugin, because after an Omarchy plugin update the plugin's IPC can
@@ -432,7 +423,7 @@ arrive mid-glide add up, so a fast spin never loses distance. Touchpad
 scrolling is always direct. `status` shows `smooth_scroll=on` while it is on.
 
 **5. (Optional) `SUPER+M` for the app window** — the Lua snippet under
-"The app" above, or bind `~/bin/blip-app --toggle`, which does the same.
+"The app" above.
 
 **Updating:** `omarchy plugin update nixfred.blip`, then `omarchy-restart-shell`
 (a hot-reload alone leaves the plugin's IPC on a stale instance — see

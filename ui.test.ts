@@ -173,7 +173,7 @@ describe("QML safety invariants", () => {
     expect(showApp.indexOf("root.close()")).toBeGreaterThan(-1);
     // The tooltip names the action, not a key: SUPER+M is an optional
     // binding from the README, and Omarchy's own tooltips name no keys.
-    expect(panel).toContain('tooltipText: "Keep Blip as a window"');
+    expect(panel).toContain('tooltipText: "Open the app window"');
     expect(panel).not.toContain("SUPER+M)");
   });
 
@@ -267,8 +267,7 @@ describe("QML safety invariants", () => {
     expect(widget).toContain('if (raw === "" || !/^[A-Za-z0-9._@:;$-]{1,256}$/.test(raw)) return false');
     expect(widget).toContain('return root.show(chat) ? "shown" : "not a conversation id"');
     // show() must report failure rather than the handler assuming success
-    // (the popout surface needs its panel; the window surface creates its own)
-    expect(widget).toContain("if (!inWindow && !panelLoader.item) return false");
+    expect(widget).toContain("if (!panelLoader.item) return false");
   });
 
   test("read marks are queued and only applied after a successful load", () => {
@@ -1329,41 +1328,3 @@ describe("a signed-out Mac is said before a send fails (reads work, sends cannot
   });
 });
 
-
-// The header's surface toggle: "Keep Blip as a window" in the popout, "Back to
-// the popout" in the window. The choice is saved (blip-surface.ts) and wins on
-// every start; in window mode every "open Blip" goes to the window.
-describe("the surface toggle: popout or window, last choice wins", () => {
-  test("the header offers it on both surfaces and the host saves the choice", () => {
-    expect(panel).toContain('objectName: "blipKeepAsWindow"');
-    expect(panel).toContain('objectName: "blipBackToPopout"');
-    expect(panel).toContain('hostWidget.setSurface("window")');
-    expect(panel).toContain('hostWidget.setSurface("popout")');
-    const set = widget.slice(widget.indexOf("function setSurface(s) {"), widget.indexOf("\n  }", widget.indexOf("function setSurface(s) {")));
-    expect(set).toContain('Quickshell.execDetached(["bun", root.surfaceScript, s])');
-    // leaving the window happens a turn later: the click ran inside it
-    expect(set).toContain("else Qt.callLater(function() { root.hideWindow(); root.open() })");
-    expect(widget).toContain('path: root.home + "/.local/state/blip/surface.json"');
-  });
-
-  test("in window mode the icon, the panel hotkey and a toast open the window", () => {
-    const click = widget.slice(widget.indexOf("function leftClick() {"), widget.indexOf("if (!root.leader) {", widget.indexOf("function leftClick() {")));
-    expect(click).toContain("if (root.leader) root.showApp()");
-    expect(click).toContain('"ipc", "call", root.moduleName, "app"');
-    expect(widget).toContain("if (root.windowSurface && root.leader) { root.showApp(); return }");   // toggleOn
-    expect(widget).toContain("if (root.windowSurface) { root.showApp(); return }");                  // openOn
-    expect(widget).toContain("if (inWindow) Qt.callLater(function() { if (windowLoader.item) windowLoader.item.openThread(target) })");
-  });
-
-  test("the QML parser keeps blip-surface.ts's contract: only an exact value counts", async () => {
-    const { parseSurface } = await import("./blip-surface");
-    const fn = widget.slice(widget.indexOf("  function parseSurface(text) {"), widget.indexOf("  FileView {", widget.indexOf("  function parseSurface(text) {")));
-    const qmlParse = new Function("text", fn.replace("function parseSurface(text) {", "").replace(/}\s*$/, ""));
-    for (const t of ["", "{", '{"surface":"window"}', '{"surface":"popout"}', '{"surface":"Window"}', '{"surface":null}', "[]"])
-      expect(qmlParse(t)).toBe(parseSurface(t));
-  });
-
-  test("status reports the surface", () => {
-    expect(widget).toContain('+ " surface=" + root.surface');
-  });
-});
