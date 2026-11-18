@@ -533,6 +533,14 @@ what it is handed. Keep it that way.
   host is the service (`hostWidget`) and its popout owner is the widget
   (`barOwner`); Omarchy's bar tracks popouts and panel switching by the
   owner, so do not collapse the two again.
+  The icon finds the service through `bar.shell.serviceFor` under the
+  built-in bar; a REPLACEMENT bar (e.g. a cloned `bhp.bar`) hands widgets a
+  service-less facade, so `BlipServiceRegistry.js` (`.pragma library`, the
+  service registers itself) is the fallback. And the service exists only
+  while the plugin is ENABLED, which for a third-party plugin means placed on
+  the bar OR listed in shell.json `plugins[]` (PluginRegistry.isEnabled →
+  findEntryLocation): `blip-setup` adds the `plugins[]` entry, or removing
+  the icon would stop the app.
 - **EXIF orientation is baked at fetch time, and every `Image` sets
   `autoTransform: true`.** iPhone photos carry rotation as an EXIF tag;
   `sips` preserves it when converting HEIC, Qt ignores it by default, and imv

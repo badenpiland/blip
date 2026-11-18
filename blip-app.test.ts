@@ -117,6 +117,31 @@ describe("the app is a service; the bar icon is a view of it", () => {
     expect(bar).toContain("running: root.service === null");
   });
 
+  test("under a replacement bar (service-less facade) the icon falls back to the service's registration", () => {
+    const registry = read("BlipServiceRegistry.js");
+    expect(registry.split("\n")[0]).toBe(".pragma library");   // one shared instance per engine
+    expect(service).toContain('import "BlipServiceRegistry.js" as BlipServiceRegistry');
+    expect(service).toContain("Component.onCompleted: BlipServiceRegistry.register(root)");
+    expect(service).toContain("Component.onDestruction: BlipServiceRegistry.unregister(root)");
+    expect(bar).toContain('import "BlipServiceRegistry.js" as BlipServiceRegistry');
+    // facade first, registry only when the facade has nothing
+    const resolve = bar.slice(bar.indexOf("function resolveService()"), bar.indexOf("Timer {", bar.indexOf("function resolveService()")));
+    expect(resolve.indexOf("serviceFor(root.moduleName)")).toBeLessThan(resolve.indexOf("BlipServiceRegistry.get()"));
+    // the registry forgets only the instance that registered
+    const mod: any = {};
+    new Function("exports", registry.replace(".pragma library", "") + ";exports.r=register;exports.u=unregister;exports.g=get;")(mod);
+    const a = {}, b = {};
+    mod.r(a); mod.u(b); expect(mod.g()).toBe(a);
+    mod.r(b); mod.u(a); expect(mod.g()).toBe(b);
+    mod.u(b); expect(mod.g()).toBe(null);
+  });
+
+  test("setup keeps the service enabled without the icon: a plugins[] entry, added once", () => {
+    const setup = read("scripts/blip-setup");
+    expect(setup).toContain(`jq -e '(.plugins // []) | any(.id? == "nixfred.blip")'`);
+    expect(setup).toContain(`.plugins = ((.plugins // []) + [{"id": "nixfred.blip"}])`);
+  });
+
   test("one widget hosts the popout, registered with the service and released on destruction", () => {
     expect(bar).toContain("readonly property bool hostsPanel: leader && service !== null");
     expect(bar).toContain("if (hostsPanel) service.registerPanelHost(root)");

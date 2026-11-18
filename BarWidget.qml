@@ -3,6 +3,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "ScreenLeader.mjs" as ScreenLeader
+import "BlipServiceRegistry.js" as BlipServiceRegistry
 
 // blip — the bar icon, a feature of the Blip app.
 //
@@ -22,10 +23,13 @@ BarWidget {
   // service-less facade, or before the service has loaded. serviceFor() is a
   // plain call, not a notifying property, and the shell may build the bar
   // before it loads services, so the lookup retries until it answers.
+  // Under a replacement bar the facade never answers; the service's own
+  // registration (BlipServiceRegistry.js) is the fallback.
   property var service: null
   function resolveService() {
     var s = bar && bar.shell && typeof bar.shell.serviceFor === "function"
       ? bar.shell.serviceFor(root.moduleName) : null
+    if (!s) s = BlipServiceRegistry.get()
     if (s !== root.service) root.service = s || null
   }
   Timer {

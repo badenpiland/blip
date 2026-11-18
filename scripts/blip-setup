@@ -231,6 +231,26 @@ chmod 0644 "$desktop_tmp"
 mv -f "$desktop_tmp" "$data_home/applications/blip.desktop"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data_home/applications" 2>/dev/null || true
 echo "✓ app launcher entry installed: Blip ($data_home/applications/blip.desktop → $bin_dir/blip-app)"
+# Omarchy loads a third-party plugin's SERVICE only while the plugin is enabled,
+# and it counts as enabled only while it sits in the bar layout OR in
+# shell.json's plugins[] (PluginRegistry.findEntryLocation). Placed only on the
+# bar, taking the icon off would stop the whole app. A plugins[] entry keeps it
+# running either way; an existing entry (and its options) is left alone.
+shell_json="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+if [[ -f "$shell_json" ]] && command -v jq >/dev/null 2>&1; then
+  if jq -e '(.plugins // []) | any(.id? == "nixfred.blip")' "$shell_json" >/dev/null 2>&1; then
+    echo "• shell.json already lists nixfred.blip under plugins[]"
+  elif shell_tmp="$(mktemp "$shell_json.blip.XXXXXX")" \
+       && jq '.plugins = ((.plugins // []) + [{"id": "nixfred.blip"}])' "$shell_json" >"$shell_tmp"; then
+    chmod --reference="$shell_json" "$shell_tmp" 2>/dev/null || true
+    mv -f "$shell_tmp" "$shell_json"
+    omarchy-shell -q shell reloadConfig >/dev/null 2>&1 || true
+    echo "✓ shell.json: nixfred.blip added to plugins[] — the app keeps running with the bar icon removed"
+  else
+    rm -f "${shell_tmp:-}"
+    echo "• could not update $shell_json; add { \"id\": \"nixfred.blip\" } to its plugins[] yourself" >&2
+  fi
+fi
 
 # The from= option for the Blip key's authorized_keys line. $1 = the address
 # this machine reached the Mac from. Over Tailscale that address is a stable

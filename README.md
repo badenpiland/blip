@@ -405,8 +405,10 @@ own and you should only be asked for a permission you actually want.
 cloned by hand: `omarchy plugin enable nixfred.blip --section right`, or add
 `{ "id": "nixfred.blip" }` to `bar.layout.right` in
 `~/.config/omarchy/shell.json`. Then `omarchy-restart-shell` — the speech
-bubble is in your bar. Prefer Blip as just an app? Remove the icon from the bar
-and keep the plugin enabled: the app, toasts and IPC run without it.
+bubble is in your bar. Prefer Blip as just an app? Remove the icon from the bar:
+the app, toasts and IPC run without it, because `blip-setup` also lists
+`nixfred.blip` under `plugins[]` in `shell.json`, which keeps the plugin enabled
+off the bar. Works under a replacement bar plugin too.
 
 **App launcher.** `blip-setup` installs a **Blip** entry
 (`~/.local/share/applications/blip.desktop`, icon included) that runs

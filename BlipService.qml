@@ -9,6 +9,7 @@ import Quickshell.Hyprland
 import "BinDir.mjs" as BinDir
 import "ScreenLeader.mjs" as ScreenLeader
 import "TapbackActions.mjs" as TapbackActions
+import "BlipServiceRegistry.js" as BlipServiceRegistry
 
 // blip — the app. iMessage on Linux, with a Mac as the gateway.
 //
@@ -37,6 +38,10 @@ Item {
   property var shell: null
   property var manifest: null
   property string omarchyPath: ""
+  // The bar icon's fallback route to this service, for replacement bars whose
+  // facade has no serviceFor (BlipServiceRegistry.js says why).
+  Component.onCompleted: BlipServiceRegistry.register(root)
+  Component.onDestruction: BlipServiceRegistry.unregister(root)
 
   // ---- the bar icon, when it is placed (the panel host)
   // Omarchy builds one bar — and therefore one BarWidget — PER SCREEN. The
