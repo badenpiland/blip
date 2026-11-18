@@ -110,6 +110,13 @@ a daemon only returns if the app ever has to run outside the shell).
   documented in README for others). Esc closes (unwinds first). Size
   persisted. Still open: unread count in the window title; sidebar search.
 - [ ] ~~`blipd` daemon~~ — retired (see above).
+- [x] **An app, not a bar plugin** — the plugin is an Omarchy `service` (BlipService.qml,
+  `keepLoaded`) with the bar icon as an optional `bar-widget` on top. The service owns
+  everything the leader BarWidget used to (poller, watcher, ledger, toasts, IPC, window),
+  so the app runs with the icon off the bar. `blip-setup` installs a **Blip** launcher
+  entry (`blip.desktop` → `~/bin/blip-app`). Still no daemon: the shell is the process.
+  Not yet done: the window still shares the shell's class (`org.quickshell`), so the
+  launcher entry cannot be matched to the running window (no StartupWMClass).
 
 ## Release readiness — Omarchy plugin site
 

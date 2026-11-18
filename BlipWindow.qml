@@ -8,8 +8,8 @@ import qs.Commons as Commons
 // Blip window — the "actual app": a Messages.app-style two-pane window.
 //
 // Hosted INSIDE the Omarchy shell (like the dev-gallery's FloatingWindow), so
-// it shares the bar widget's poller, push watcher, and read-state ledger —
-// no daemon, no second collector. `hostWidget` is injected by BarWidget.
+// it shares the Blip service's poller, push watcher, and read-state ledger —
+// no daemon, no second collector. `hostWidget` is injected by BlipService.
 //
 // The content is the SAME BlipView the bar popout renders, in splitView:
 // sidebar + conversation side by side, with every feature the popout has

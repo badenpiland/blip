@@ -2,7 +2,7 @@
 """Run the shipping badge/read bindings with synthetic data, without Blip or a Mac.
 
 Requires Qt 6's qmltestrunner and QtQuick/QtTest QML modules. An optional source
-argument lets the same regression test be run against an older BarWidget.qml.
+argument lets the same regression test be run against an older BlipService.qml (or a pre-service BarWidget.qml).
 """
 from pathlib import Path
 import os
@@ -103,7 +103,7 @@ Item {
 
 def main():
     source = (Path(sys.argv[1]) if len(sys.argv) > 1 else
-              Path(__file__).resolve().parents[1] / "BarWidget.qml")
+              Path(__file__).resolve().parents[1] / "BlipService.qml")
     runner = os.environ.get("QMLTESTRUNNER") or shutil.which("qmltestrunner")
     if not runner:
         runner = next((str(path) for path in (

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as SendState from "./send-state";
-const source=readFileSync(new URL("./BarWidget.qml",import.meta.url),"utf8");
+const source=readFileSync(new URL("./BlipService.qml",import.meta.url),"utf8");
 function extract(name:string) {
   const at=source.indexOf("  function "+name+"("); const begin=source.indexOf("{",at); let depth=0;
   for(let i=begin;i<source.length;i++) {if(source[i]==="{")depth++; else if(source[i]==="}" && --depth===0)return source.slice(at,i+1);}

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 
 const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
-const widget = readFileSync(new URL("./BarWidget.qml", import.meta.url), "utf8");
+const widget = readFileSync(new URL("./BlipService.qml", import.meta.url), "utf8");
 // Exercise the actual documented shell command and QML launch command, including
 // their different quoting layers. Every external action is intercepted below.
 const shortcut = readme.split('"Blip messages", [[')[1].split("]])")[0];

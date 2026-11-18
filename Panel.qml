@@ -24,8 +24,12 @@ Panel {
   manageIpc: false
 
   property var anchorItem: null
+  // hostWidget = BlipService (data and actions); barOwner = the bar widget
+  // that owns this popout, which is what Omarchy's bar tracks popouts and
+  // panel switching by. They were one object until the app became a service.
   property var hostWidget: null
-  readonly property var barIdentity: hostWidget || root
+  property var barOwner: null
+  readonly property var barIdentity: barOwner || root
 
   property real preferredWidth: 0
   property real preferredHeight: 0

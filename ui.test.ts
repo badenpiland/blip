@@ -5,7 +5,11 @@ import { parseScrollGain, parseSmoothScroll, parseTouchpadScrollGain } from "./s
 
 // The renderer moved from Panel.qml into BlipView.qml in 1.8.0 (shared with the app window).
 const panel = readFileSync(new URL("./BlipView.qml", import.meta.url), "utf8");
-const widget = readFileSync(new URL("./BarWidget.qml", import.meta.url), "utf8");
+// The poller, ledger, toasts, IPC and app window live in the Blip service
+// (BlipService.qml) since the app stopped depending on the bar icon; `widget`
+// is that source, and `bar` is the icon (BarWidget.qml), a view on it.
+const widget = readFileSync(new URL("./BlipService.qml", import.meta.url), "utf8");
+const bar = readFileSync(new URL("./BarWidget.qml", import.meta.url), "utf8");
 const window = readFileSync(new URL("./BlipWindow.qml", import.meta.url), "utf8");
 
 function handleTextKeySource() {
@@ -169,8 +173,8 @@ describe("QML safety invariants", () => {
     // the popout gets out of the way, and closes BEFORE the window is shown —
     // inside showApp(), so double-click, ⇱ and IPC `app` (SUPER+M) all agree
     const showApp = widget.slice(widget.indexOf("function showApp()"), widget.indexOf("function anySurfaceOpen"));
-    expect(showApp.indexOf("root.close()")).toBeLessThan(showApp.indexOf("ensureWindow()"));
-    expect(showApp.indexOf("root.close()")).toBeGreaterThan(-1);
+    expect(showApp.indexOf("root.closePanel()")).toBeLessThan(showApp.indexOf("ensureWindow()"));
+    expect(showApp.indexOf("root.closePanel()")).toBeGreaterThan(-1);
     // The tooltip names the action, not a key: SUPER+M is an optional
     // binding from the README, and Omarchy's own tooltips name no keys.
     expect(panel).toContain('tooltipText: "Open the app window"');
@@ -214,7 +218,8 @@ describe("QML safety invariants", () => {
     expect(panel).toContain('localsend --headless send "$2"');
     expect(panel).toContain('onTapped: root.openMessageMenu(modelData, String(linkCard.link.url || ""))');
     expect(panel).toContain('if (shareUrl !== "") { closeShare(); return true }');
-    expect(widget).toContain('function share(url: string): string { if (!root.automationOn) return root.automationOff;');
+    const share = widget.slice(widget.indexOf("function share(url: string): string {"), widget.indexOf("function compose("));
+    expect(share).toContain("if (!root.automationOn) return root.automationOff");
     // never the URL as an argv element of qrencode / localsend
     expect(panel).not.toContain('qrencode", ');
     expect(panel).not.toContain("localsend --headless send \"$2\" \"$3\"");
@@ -266,8 +271,9 @@ describe("QML safety invariants", () => {
     // handle but is unknown still opens, on purpose (start a new conversation).
     expect(widget).toContain('if (raw === "" || !/^[A-Za-z0-9._@:;$-]{1,256}$/.test(raw)) return false');
     expect(widget).toContain('return root.show(chat) ? "shown" : "not a conversation id"');
-    // show() must report failure rather than the handler assuming success
-    expect(widget).toContain("if (!panelLoader.item) return false");
+    // With no bar icon there is no popout: the conversation opens in the app
+    // window instead of the call failing (the app does not need the bar).
+    expect(widget).toContain("if (root.windowVisible || !root.panel) {");
   });
 
   test("read marks are queued and only applied after a successful load", () => {
@@ -439,9 +445,9 @@ describe("QML safety invariants", () => {
   test("Omarchy's shell toggle can find the panel", () => {
     // Bar.findPanelWidget wants open(), close() and `opened` on the widget
     // item; drop `opened` and every SUPER+CTRL panel hotkey silently skips Blip.
-    expect(widget).toContain("readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false");
-    expect(widget).toContain("function open() {");
-    expect(widget).toContain("function close() {");
+    expect(bar).toContain("readonly property bool opened: host && host.panelItem ? host.panelItem.opened === true : false");
+    expect(bar).toContain("function open() {");
+    expect(bar).toContain("function close() {");
   });
 
   test("a follower forwards to the shell that is actually running", () => {
@@ -461,22 +467,18 @@ describe("QML safety invariants", () => {
 
   test("a panel hotkey on a follower screen reaches the leader's panel", () => {
     // The shell hands the hotkey to the widget on the FOCUSED screen; only the
-    // leader owns a panel. A no-op open() on a follower is silent (the shell
-    // still reports success), so open() must route through openOn(), which
-    // forwards to the leader by an open-only verb — toggleon would close an
-    // already-open panel — and re-anchors to the asked-for screen.
-    expect(widget).toContain("function open() { root.openOn(");
-    const openOn = widget.slice(widget.indexOf("function openOn("));
+    // panel host owns a panel. Every copy reaches it through the service
+    // (service.panelHost), re-anchored to its own screen, by an open-only verb:
+    // toggling would close an already-open panel.
+    expect(bar).toContain("function open() { if (host) host.openOn(root.ownScreen ? String(root.ownScreen.name) : \"\") }");
+    const openOn = bar.slice(bar.indexOf("function openOn("));
     const body = openOn.slice(0, openOn.indexOf("\n  }") + 4);
-    expect(body).toContain("if (!root.leader)");
-    expect(body).toContain('"openon", screenName');
     expect(body).toContain("root.anchorPanel(p, screenName)");
     expect(body).toContain("p.open()");
     expect(body).not.toContain("p.toggle()");
     expect(widget).toContain("function openon(screen: string): void { root.openOn(screen) }");
-    // close() on a follower forwards too instead of doing nothing.
-    const close = widget.slice(widget.indexOf("function close() {"));
-    expect(close.slice(0, close.indexOf("\n  }") + 4)).toContain('"ipc", "call", root.moduleName, "close"');
+    // close() on any copy closes the host's panel instead of doing nothing.
+    expect(bar).toContain("function close() { if (host) host.closePanel() }");
   });
 
   test("wheel and touchpad deltas apply 1:1, leaving speed to the system setting", () => {
@@ -780,7 +782,7 @@ describe("media renders at its intended scale", () => {
 // 2.3.2 (BlipView's compose block, PR #28 vs #30) and was invisible until the
 // post-deploy log scan. Cheapest possible guard.
 test("no source file carries a merge conflict marker", () => {
-  for (const f of ["BlipView.qml", "BarWidget.qml", "Panel.qml", "BlipWindow.qml"]) {
+  for (const f of ["BlipView.qml", "BarWidget.qml", "BlipService.qml", "Panel.qml", "BlipWindow.qml"]) {
     const src = readFileSync(new URL("./" + f, import.meta.url), "utf8");
     for (const line of src.split("\n")) {
       expect(
@@ -886,8 +888,13 @@ test("a long draft scrolls with the wheel, a short one passes it on", () => {
 });
 
 // A follower bar must never start a collector of its own.
-test("follower bars forward right/middle clicks to the leader", () => {
-  expect(widget).toContain('code === Qt.RightButton ? "read" : "refresh"');
+test("every bar's right/middle clicks reach the one service, never a second collector", () => {
+  expect(bar).toContain("if (code === Qt.MiddleButton) root.service.refresh(root.service.anySurfaceOpen(), false)");
+  expect(bar).toContain("else if (code === Qt.RightButton) root.service.markAllRead()");
+  // The icon runs no collector, watcher or bridge daemon of its own.
+  expect(bar).not.toContain("collectorPath");
+  expect(bar).not.toContain("id: watchProc");
+  expect(bar).not.toContain("blip-bridged");
 });
 
 // QsWindow.window is null while a freshly built bar completes its widgets, so
@@ -897,9 +904,9 @@ test("follower bars forward right/middle clicks to the leader", () => {
 // unresolved widget waits rather than racing its siblings. The rule itself is
 // tested in screen-leader.test.ts; this pins that the widget uses it.
 test("an unresolved window only claims the crown when it is the only screen", () => {
-  const elect = widget.slice(widget.indexOf("readonly property var ownScreen"),
-                             widget.indexOf("id: followerState"));
-  expect(widget).toContain('import "ScreenLeader.mjs" as ScreenLeader');
+  const elect = bar.slice(bar.indexOf("readonly property var ownScreen"),
+                          bar.indexOf("readonly property bool hostsPanel"));
+  expect(bar).toContain('import "ScreenLeader.mjs" as ScreenLeader');
   expect(elect).toContain("leader: ScreenLeader.isLeader(ownScreen, Quickshell.screens)");
   expect(elect).not.toMatch(/leader:\s*!ownScreen/);
 });
@@ -1265,13 +1272,13 @@ describe("the bar glyph survives an Omarchy whose OpticalGlyph has no paintedSiz
   const optical = readFileSync(new URL("./OpticalBarGlyph.qml", import.meta.url), "utf8");
 
   test("BarWidget.qml never assigns paintedSize itself", () => {
-    expect(widget).not.toMatch(/^\s*paintedSize\s*:/m);
+    expect(bar).not.toMatch(/^\s*paintedSize\s*:/m);
   });
 
   test("the optical glyph is loaded from its own file, and plain text covers its absence", () => {
-    expect(widget).toContain('setSource("OpticalBarGlyph.qml"');
-    expect(widget).toMatch(/visible: !glyphSlot\.optical/);
-    expect(widget).toMatch(/readonly property bool optical: opticalGlyph\.status === Loader\.Ready/);
+    expect(bar).toContain('setSource("OpticalBarGlyph.qml"');
+    expect(bar).toMatch(/visible: !glyphSlot\.optical/);
+    expect(bar).toMatch(/readonly property bool optical: opticalGlyph\.status === Loader\.Ready/);
   });
 
   test("the one file that assigns paintedSize scales to the stock bar icon size", () => {

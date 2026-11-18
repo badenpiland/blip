@@ -37,10 +37,16 @@ avatar.ts                           handle → ~/.cache/blip/avatars (imsg avata
                                     checked; .none negative marker; 7-day TTL). `--batch`: handles on
                                     stdin, one JSON line each, disk before Mac. `--retry` trusts a .none
                                     for 15 min, never skips it (skipping cost ~45 s per window open).
-                                    The url map lives in BarWidget.avatarCache: the window is rebuilt.
+                                    The url map lives in BlipService.avatarCache: the window is rebuilt.
 paste.ts                            clipboard snapshot → draft image in $XDG_RUNTIME_DIR/blip or text.
 toast-allowlist.ts                  local allowlist load/set helper; bounded JSON stdin, atomic private writes.
-BarWidget.qml                       the single poller, badge, toasts, IPC.
+BlipService.qml                     THE APP: an Omarchy service (manifest kinds service + bar-widget,
+                                    keepLoaded), one per shell. The single poller, watcher, bridge
+                                    daemon, read ledger, toasts, codes, IPC and the app window.
+BarWidget.qml                       the optional bar icon: badge, popout host, clicks. A VIEW of the
+                                    service (bar.shell.serviceFor); runs no collector of its own.
+scripts/blip-app                    launcher: focus the window or ask the service for it; blip-setup
+                                    installs it with share/blip.desktop.in + share/blip.svg.
 Panel.qml                           list view + conversation view + compose. Renders only.
 manifest.json                       plugin id nixfred.blip
 ```
@@ -103,7 +109,7 @@ what it is handed. Keep it that way.
   `bridge/mac/test_wire_time.py` set their own zones and are what actually
   cover it.
 - **Reads are optimistic-with-suppression.** Persistent read state moves only
-  via collector runs (~1 s), so BarWidget applies reads to the local model
+  via collector runs (~1 s), so BlipService applies reads to the local model
   IMMEDIATELY and remembers them in `localReads[chat]` (thread last_ts at
   read time, 60 s TTL). Every collector result is filtered through that
   ledger — a poll in flight when the user opened a thread must not resurrect
@@ -113,7 +119,7 @@ what it is handed. Keep it that way.
   flashed. Same-chat read refreshes coalesce in the queue.
 - **Sends are optimistic.** `send()` draws the bubble (`pending: true`,
   "Sending…") and clears the field BEFORE imsg-send runs; text sends queue.
-  `pendingSends` (BarWidget memory, never disk) rides every thread reload on
+  `pendingSends` (BlipService memory, never disk) rides every thread reload on
   stdin (`--pending-stdin`) and `withPendingSends()` in thread.ts keeps each
   bubble until a real from-me row with the same text lands, resolving one
   send per row. The read watermark (`--seen`) skips pending bubbles: their ts
@@ -148,7 +154,7 @@ what it is handed. Keep it that way.
 - **A peeked thread is not read.** In the window, the sidebar cursor resting on
   a row shows that thread (`peeking`); focus stays in the list and neither
   read path fires — `markRead()` in BlipView (the only caller of the host's
-  `markThreadRead`) and `readingSurface()` in BarWidget both check it. Focus
+  `markThreadRead`) and `readingSurface()` in BlipService both check it. Focus
   entering the compose field (Enter, click, typing) is the commit. Split view
   only.
 - **Unread is ledger-backed.** `unreadCounts` and `unreadOldest` persist per-chat
@@ -209,7 +215,7 @@ what it is handed. Keep it that way.
   groups use prevalidated accessibility objects; auto-advance may move only
   to the expected next box. With autofill off, the code toast and keyboard
   shortcuts keep their existing behavior:
-  **A security code lives five minutes in BarWidget memory, nowhere else.**
+  **A security code lives five minutes in BlipService memory, nowhere else.**
   `selectCodes()` (collector) spots it; `noteCode()` holds the newest and
   toasts THAT A CODE ARRIVED — never the digits. Omarchy's daemon persists
   every displayed toast's body to `~/.local/state/omarchy/notifications/
@@ -263,7 +269,7 @@ what it is handed. Keep it that way.
   (Fred, 2026-08-31): fetched MEDIA caches as plain files in
   `~/.cache/blip/att` (0700/0600, 500 MB LRU) — the Linux box's disk is LUKS-encrypted
   at rest. Message text still never lands on disk — unsent drafts included:
-  `BarWidget.draftCache` keeps them in memory only, so a shell restart drops
+  `BlipService.draftCache` keeps them in memory only, so a shell restart drops
   them by design; do not persist them. `push-read.log` beside state.json
   records each read-push's exit code and `imsg-read`'s status line — never
   content.
@@ -347,7 +353,7 @@ what it is handed. Keep it that way.
   menus use `toast-allowlist.ts` to update the existing `allowlist.json`.
   Matching stays exact chat OR handle, as in `selectToasts`; disabling removes
   both matching keys, preserving unrelated entries and object metadata. Groups
-  never use the last speaker as a notification-settings target. BarWidget owns
+  never use the last speaker as a notification-settings target. BlipService owns
   the process and shared saved state, so closing either view cannot cancel a
   write. Invalid JSON is shown as an error, never silently replaced. No read
   marks, unread counts, bridge calls, or new automation IPC are involved.
@@ -493,7 +499,7 @@ what it is handed. Keep it that way.
 - **The app window is RECREATED on show, never re-mapped.** Quickshell does
   not re-map a `FloatingWindow` after `visible` has been false once: the
   property flips true, no client appears (SUPER+M "did nothing", 1.8.3).
-  BarWidget's `ensureWindow()`/`hideWindow()` toggle the Loader's `active`;
+  BlipService's `ensureWindow()`/`hideWindow()` toggle the Loader's `active`;
   BlipWindow persists size + was-open in `~/.local/state/blip/window.json`
   and restores on creation. Do not "simplify" this back to `visible`.
   Idle/DPMS maps a new client on the focused workspace; that is not a new
@@ -516,6 +522,17 @@ what it is handed. Keep it that way.
   re-maps one), and focus is fired via `Quickshell.execDetached` — a
   `Process` silently ignores `running=true` on the zombie. Deploy with a
   restart, never rely on hot-reload for anything IPC.
+  Since the app became a service (`keepLoaded: true`) the IpcHandler lives
+  in BlipService, which a hot-reload does NOT replace: IPC answers from the
+  live service, but it is the OLD service code until a restart, while the
+  bar icon reloads fresh. Still: deploy with a restart.
+- **The app is the service; the bar icon is optional.** Nothing the app
+  needs may live in BarWidget.qml. Every "open" falls back to the app window
+  when no widget has registered as `panelHost` (icon removed from the bar, or
+  a replacement bar that hands out a service-less facade). The popout's data
+  host is the service (`hostWidget`) and its popout owner is the widget
+  (`barOwner`); Omarchy's bar tracks popouts and panel switching by the
+  owner, so do not collapse the two again.
 - **EXIF orientation is baked at fetch time, and every `Image` sets
   `autoTransform: true`.** iPhone photos carry rotation as an EXIF tag;
   `sips` preserves it when converting HEIC, Qt ignores it by default, and imv
@@ -591,7 +608,7 @@ what it is handed. Keep it that way.
   open, not once a second.
 
 - **The persistent channel is an ACCELERATOR; the one-shot path is the
-  contract.** `blip-bridged` (Linux, started by the LEADER BarWidget) holds
+  contract.** `blip-bridged` (Linux, started by BlipService) holds
   two `imsg serve` channels open over ssh, so a query costs the query instead
   of ~90 ms of startup. The dedicated key still runs a bare `imsg serve`
   (dispatch's forced-command gate is unchanged) on its own ControlMaster

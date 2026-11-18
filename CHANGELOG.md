@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Blip is an app now, and the bar icon is a feature of it.** The plugin declares an Omarchy service
+  (`BlipService.qml`, kept loaded) beside the bar widget. The service owns the poller, the push watcher, the
+  read ledger, toasts, security codes, IPC and the app window, which used to live in the bar widget on the
+  first screen. The icon is now a view: badge, popout and clicks, reading the service. Take the icon off the
+  bar and Blip keeps running: the window, toasts and IPC all work. Every screen's icon talks to the one service
+  directly, so the follower-to-leader `qs ipc` forwarding is gone.
+- **Blip in the app launcher.** `blip-setup` installs `~/.local/share/applications/blip.desktop` with its own
+  icon, running `~/bin/blip-app`: focus the Blip window, or ask the shell to open it. `blip-app --toggle` is the
+  `SUPER+M` behaviour (a focused window closes).
+- **Before you update:** restart the shell after updating (`omarchy-restart-shell`) — a kept-loaded service is
+  not replaced by a hot-reload — and re-run `blip-setup` for the launcher entry.
+
 ## 2.7.0 - 2026-11-17 - any-emoji reactions, native replies, stickers and voice messages
 
 Everything since 2.6.2: 200 commits from 22 people and 42 merged pull requests. The big pieces are reactions with any

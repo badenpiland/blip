@@ -52,9 +52,11 @@ Blip went public on 2026-08-31 and has moved fast since, much of it from
 people who showed up with pull requests. What is in it now:
 
 - **The app.** A Messages-style window — sidebar of every conversation, the
-  open thread, compose — next to the bar popout. `SUPER+M`, the ⇱ button in
-  the panel header, double-click the bar icon, or `qs ipc … app`. Remembers
-  size and whether it was open across shell restarts.
+  open thread, compose. Open **Blip** from the app launcher like any other app,
+  or `SUPER+M`, the ⇱ button in the panel header, double-click the bar icon, or
+  `qs ipc … app`. It is a normal window that stays open, and it remembers size
+  and whether it was open across shell restarts. The bar icon is optional:
+  take it off the bar and Blip keeps running as an app, toasts included.
 - **Pinned conversations**, mirrored from Messages on the Mac, in the same
   order, as avatar tiles above the list. Read-only: Blip never re-pins.
 - **The font Messages uses.** Omarchy renders everything in monospace, and that
@@ -165,8 +167,12 @@ Linux side. If the Mac is asleep, the widget dims and says so.
   it too. On a multi-monitor bar the panel lives on the first screen's copy.
 
 **The app**
-- double-click the bar icon, press `SUPER+M`, or IPC `app` for a
-  Messages-style window (IPC `window` is a plain toggle). For the keybind, add
+- **Blip** in the app launcher (installed by `blip-setup`; it runs
+  `~/bin/blip-app`, which focuses the window or opens it), double-click the bar
+  icon, press `SUPER+M`, or IPC `app` for a Messages-style window (IPC `window`
+  is a plain toggle). The app does not need the bar icon: the plugin is an
+  Omarchy service with an optional bar widget on top, so with the icon off the
+  bar the window, toasts and IPC all keep working. For the keybind, add
   this to `~/.config/hypr/bindings.lua` — it asks **Hyprland** where the
   window is (front → close, elsewhere → focus, none → create) instead of
   the plugin, because after an Omarchy plugin update the plugin's IPC can
@@ -395,11 +401,18 @@ time, with the fix for each ❌. It does not test the optional read-push grant
 unless you add `--markread`, because that probe pops an Automation prompt of its
 own and you should only be asked for a permission you actually want.
 
-**4. Bar widget.** `omarchy plugin add --enable` already placed it. If you
+**4. Bar widget (optional).** `omarchy plugin add --enable` already placed it. If you
 cloned by hand: `omarchy plugin enable nixfred.blip --section right`, or add
 `{ "id": "nixfred.blip" }` to `bar.layout.right` in
 `~/.config/omarchy/shell.json`. Then `omarchy-restart-shell` — the speech
-bubble is in your bar.
+bubble is in your bar. Prefer Blip as just an app? Remove the icon from the bar
+and keep the plugin enabled: the app, toasts and IPC run without it.
+
+**App launcher.** `blip-setup` installs a **Blip** entry
+(`~/.local/share/applications/blip.desktop`, icon included) that runs
+`~/bin/blip-app`: it focuses the Blip window, or asks the shell to open it.
+`blip-app --toggle` closes it when it is already focused, which is the
+`SUPER+M` behaviour, if you would rather bind that than the Lua snippet.
 
 **Clock and dates.** Out of the box the time follows your locale — `9:08 PM`
 or `21:08` — and dates read the way Messages writes them: `Aug 28`, or
@@ -684,8 +697,12 @@ omarchy plugin remove nixfred.blip --yes
 omarchy-restart-shell
 ```
 
-(`omarchy plugin disable nixfred.blip` instead, to take it off the bar but keep
-the checkout.)
+(`omarchy plugin disable nixfred.blip` instead, to stop it but keep
+the checkout.) Then the launcher entry `blip-setup` added:
+
+```bash
+rm -f ~/.local/share/applications/blip.desktop ~/.local/share/icons/hicolor/scalable/apps/blip.svg ~/bin/blip-app
+```
 
 **2. The shims.** `blip-setup` installs `blip-shim` as five tools in `~/bin`,
 backing up anything it displaced as `<tool>.pre-blip.<epoch>`:

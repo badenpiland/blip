@@ -118,7 +118,7 @@ describe("imsg-react: bubble label matching", () => {
 // tapback-actions.ts depends on.
 describe("message menu: tapbacks", () => {
   const view = readFileSync(new URL("./BlipView.qml", import.meta.url), "utf8");
-  const widget = readFileSync(new URL("./BarWidget.qml", import.meta.url), "utf8");
+  const widget = readFileSync(new URL("./BlipService.qml", import.meta.url), "utf8");
   const menu = readFileSync(new URL("./MessageMenu.qml", import.meta.url), "utf8");
   const picker = readFileSync(new URL("./ReactionPicker.qml", import.meta.url), "utf8");
 
