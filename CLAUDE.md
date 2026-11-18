@@ -511,7 +511,11 @@ what it is handed. Keep it that way.
   workspace the reader cannot reach made Blip vanish (2026-11-18). Hyprland
   0.56 MERGES a rule re-declared under the same name (probed 2026-11-18:
   leaving `workspace` out kept the old one), so the home rule is installed with
-  `enabled = true` and cleared with `enabled = false`, never by omission.
+  `enabled = true` and cleared with `enabled = false`, never by omission. The
+  one-shot `blip-session-restore` rule has a fixed name too: a restore with no
+  target turns it OFF rather than omitting `workspace`, or it inherits the
+  previous restore's workspace (a launch opened on the last workspace, found
+  by logging `launchedHere` on a real machine, 2026-11-18).
   With no real screen there is no leader, so no window: Qt's placeholder
   (empty name, 0x0) gets a bar when the last monitor goes, and mapping the
   window then segfaults Hyprland 0.56 (`screen-leader.ts`). Moving it back

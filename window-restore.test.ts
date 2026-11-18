@@ -28,8 +28,19 @@ test("quiet mapping applies only to the unique restoration window", () => {
   expect(rule).toContain('title = "^Blip-restore-abcd-1234$"');
   expect(rule).toContain("no_initial_focus = true");
   expect(rule).toContain(`workspace = ${luaString("7 silent")}`);
+  expect(rule).toContain('name = "blip-session-restore", enabled = true');
   expect(restoreRule(undefined, "Blip-restore-abcd")).not.toContain("workspace =");
   expect(() => restoreRule("2", 'Blip"')).toThrow();
+});
+// Hyprland 0.56 merges a re-declared named rule, so a restore with no target
+// that only omitted `workspace` kept the previous restore's workspace: a launch
+// opened on the last workspace (real machine, 2026-11-18). No target = rule off.
+test("a restore with no target turns the restore rule off instead of inheriting a workspace", () => {
+  for (const target of ["", undefined, null]) {
+    const rule = restoreRule(target, "Blip-restore-abcd");
+    expect(rule).toContain('name = "blip-session-restore", enabled = false');
+    expect(rule).not.toContain("workspace =");
+  }
 });
 test("workspace names cannot inject Lua", () => {
   expect(luaString('"\\\n')).toBe('"\\034\\092\\010"');

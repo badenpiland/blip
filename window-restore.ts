@@ -41,10 +41,21 @@ export function workspaceDecision(saved: unknown, incoming: unknown, reason: Wor
   return "ignore";
 }
 
+/**
+ * The one-off rule for a restored window, matched by its unique restore title.
+ * Its NAME is fixed, and Hyprland 0.56 MERGES a rule re-declared under the same
+ * name: a restore with no target that merely left `workspace` out inherited the
+ * PREVIOUS restore's workspace, so a launch opened there instead of where the
+ * reader was (real machine, 2026-11-18). So a target restores explicitly
+ * enabled, and no target turns the rule OFF: the window maps where the reader
+ * is, like any new window.
+ */
 export function restoreRule(workspace: unknown, title: string): string {
   if (!/^Blip-restore-[a-f0-9-]+$/.test(title)) throw new Error("Invalid restore title");
   const target = workspaceSelector(workspace);
-  return `hl.window_rule({ name = "blip-session-restore", match = { class = "^org\\\\.quickshell$", title = "^${title}$" }, no_initial_focus = true${target ? `, workspace = ${luaString(target + " silent")}` : ""} })`;
+  const match = `match = { class = "^org\\\\.quickshell$", title = "^${title}$" }`;
+  if (!target) return `hl.window_rule({ name = "blip-session-restore", enabled = false, ${match} })`;
+  return `hl.window_rule({ name = "blip-session-restore", enabled = true, ${match}, no_initial_focus = true, workspace = ${luaString(target + " silent")} })`;
 }
 
 const HOME_MATCH = `match = { class = ${luaString("^org\\.quickshell$")}, title = ${luaString("^Blip( \\([0-9]+\\))?$")} }`;
