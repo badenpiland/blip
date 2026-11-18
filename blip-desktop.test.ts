@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,15 +11,21 @@ const root = new URL("./", import.meta.url).pathname;
 const script = join(root, "scripts/blip-desktop");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
 
-function run(args: string[], opts: { ipcAnswers?: boolean } = {}) {
-  const { ipcAnswers = true } = opts;
-  const dir = mkdtempSync(join(tmpdir(), "blip-desktop-"));
+function run(args: string[], opts: { ipcAnswers?: boolean; alreadyRunning?: boolean; dir?: string } = {}) {
+  const { ipcAnswers = true, alreadyRunning = false } = opts;
+  const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "blip-desktop-"));
   const omarchy = join(dir, "omarchy/shell");
   mkdirSync(join(omarchy, "Commons"), { recursive: true });
   mkdirSync(join(omarchy, "Ui"), { recursive: true });
+  // A fake qs: `-n -d` "starts" an instance (and records the plugin path it
+  // was given), `ipc show` answers only once one is up, like the real one.
+  if (alreadyRunning) writeFileSync(join(dir, "running"), "");
   writeFileSync(join(dir, "qs"), `#!/bin/sh
-printf '%s\\n' "$*" >> "$FIXTURE/qs-calls"
-case "$*" in *"ipc call"*) ${ipcAnswers ? 'echo "app shown + focused"' : "exit 1"} ;; esac
+case "$*" in
+  *"ipc show"*) [ -e "$FIXTURE/running" ] && exit 0; exit 255 ;;
+  *"-n -d"*) printf '%s BLIP_PLUGIN_DIR=%s\\n' "$*" "$BLIP_PLUGIN_DIR" >> "$FIXTURE/qs-calls"; touch "$FIXTURE/running"; exit 0 ;;
+  *"ipc call"*) printf '%s\\n' "$*" >> "$FIXTURE/qs-calls"; ${ipcAnswers ? 'echo "app shown + focused"' : "exit 1"} ;;
+esac
 exit 0
 `, { mode: 0o755 });
   writeFileSync(join(dir, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -32,22 +38,36 @@ exit 0
 }
 
 describe("blip-desktop: assemble and run Blip Desktop", () => {
-  test("show assembles the config (theme links + this plugin), starts one detached instance, then shows it", () => {
+  const plugin = root.replace(/\/$/, "");
+  test("show assembles the config (theme links), starts one detached instance on the REAL plugin path, then shows it", () => {
     const r = run(["show"]);
     try {
       expect(r.code).toBe(0);
       expect(readlinkSync(join(r.runtime, "Commons"))).toBe(join(r.omarchy, "Commons"));
       expect(readlinkSync(join(r.runtime, "Ui"))).toBe(join(r.omarchy, "Ui"));
-      expect(readlinkSync(join(r.runtime, "Blip"))).toBe(root.replace(/\/$/, ""));
-      // a copy, not a link: its relative URLs resolve from the runtime folder
+      // never a link to the plugin inside the config: the scanner cannot see
+      // through it and Blip's own types went missing (omadell, 2026-11-18)
+      expect(existsSync(join(r.runtime, "Blip"))).toBe(false);
       expect(lstatSync(join(r.runtime, "shell.qml")).isSymbolicLink()).toBe(false);
       expect(readFileSync(join(r.runtime, "shell.qml"), "utf8")).toBe(read("desktop/shell.qml"));
-      expect(r.calls).toEqual([`-p ${r.runtime} -n -d`, `-p ${r.runtime} ipc call nixfred.blip app`]);
+      expect(r.calls).toEqual([`-p ${r.runtime} -n -d BLIP_PLUGIN_DIR=${plugin}`, `-p ${r.runtime} ipc call nixfred.blip app`]);
     } finally { r.done(); }
   });
   test("start only starts", () => {
     const r = run(["start"]);
-    try { expect(r.calls).toEqual([`-p ${r.runtime} -n -d`]); } finally { r.done(); }
+    try { expect(r.calls).toEqual([`-p ${r.runtime} -n -d BLIP_PLUGIN_DIR=${plugin}`]); } finally { r.done(); }
+  });
+  test("a second start while one is up starts nothing (the two-instance race)", () => {
+    const r = run(["start"], { alreadyRunning: true });
+    try { expect(r.calls).toEqual([]); } finally { r.done(); }
+  });
+  test("an old link to the plugin inside the config is removed", () => {
+    const first = run(["start"]);
+    try {
+      symlinkSync(plugin, join(first.runtime, "Blip"));
+      run(["start"], { dir: first.dir });
+      expect(existsSync(join(first.runtime, "Blip"))).toBe(false);
+    } finally { first.done(); }
   });
   test("a Blip Desktop that never answers is reported, not waited on forever", () => {
     const r = run(["show"], { ipcAnswers: false });
@@ -98,8 +118,10 @@ describe("modes: exactly one Blip owns, the last choice wins", () => {
       expect(qmlParse(t)).toBe(parseMode(t));
   });
 
-  test("Blip Desktop is told where it runs before its bindings evaluate", () => {
-    expect(shell).toContain('setSource(Qt.resolvedUrl("Blip/BlipService.qml"), { "desktopHost": true })');
+  test("Blip Desktop loads the plugin by its real path and is told where it runs before its bindings evaluate", () => {
+    expect(shell).toContain('Quickshell.env("BLIP_PLUGIN_DIR")');
+    expect(shell).toContain('+ "/BlipService.qml", { "desktopHost": true })');
+    expect(shell).not.toContain('Qt.resolvedUrl("Blip/');
   });
 
   test("the passive plugin forwards every open to Blip Desktop and starts it at login", () => {
@@ -107,7 +129,9 @@ describe("modes: exactly one Blip owns, the last choice wins", () => {
       const body = service.slice(service.indexOf(fn), service.indexOf("\n  }", service.indexOf(fn)));
       expect(body).toContain('root.runDesktop("show")');
     }
-    expect(service).toContain('if (root.passivePlugin) root.runDesktop("start")');
+    // at login (and on a mode set from outside), but not again right after a
+    // switch made here: that one already started it
+    expect(service).toContain('if (root.passivePlugin && Date.now() - root.switchedAt > 5000) root.runDesktop("start")');
     expect(service).toContain('if (root.passivePlugin) { root.callDesktop("refresh"); return }');
     expect(service).toContain('if (root.passivePlugin) { root.callDesktop("read"); return }');
     // and still draws a badge, from the state Blip Desktop writes

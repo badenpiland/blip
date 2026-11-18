@@ -12,8 +12,10 @@
 #
 # Blip Desktop is a Quickshell config assembled in $XDG_DATA_HOME/blip/desktop:
 # desktop/shell.qml from this plugin, plus links to the Omarchy shell's Commons
-# and Ui modules (the theme) and to this plugin (Blip). Re-linked on every run,
-# so a plugin update or a moved Omarchy is picked up by the next start.
+# and Ui modules (the theme). The plugin itself is loaded from its real path,
+# passed as BLIP_PLUGIN_DIR (desktop/shell.qml says why it is not a link).
+# Re-assembled on every run, so a plugin update or a moved Omarchy is picked up
+# by the next start.
 # Which Blip runs is the saved mode (blip-mode.ts); this script only starts and
 # stops the process — Blip Desktop itself steps aside when the mode is "bar".
 set -euo pipefail
@@ -45,24 +47,39 @@ fi
 
 [[ -f "$plugin_dir/BlipService.qml" && -f "$plugin_dir/desktop/shell.qml" ]] || {
   echo "blip-desktop: no Blip plugin at $plugin_dir" >&2; exit 69; }
+plugin_dir="$(cd "$plugin_dir" && pwd -P)"
 [[ -d "$omarchy_shell/Commons" && -d "$omarchy_shell/Ui" ]] || {
   echo "blip-desktop: no Omarchy shell modules at $omarchy_shell (Commons, Ui)" >&2; exit 69; }
 command -v qs >/dev/null 2>&1 || { echo "blip-desktop: qs (Quickshell) not found" >&2; exit 69; }
+command -v flock >/dev/null 2>&1 || { echo "blip-desktop: flock not found" >&2; exit 69; }
 
 mkdir -p "$runtime"
 chmod 700 "$runtime" 2>/dev/null || true
 ln -sfn "$omarchy_shell/Commons" "$runtime/Commons"
 ln -sfn "$omarchy_shell/Ui" "$runtime/Ui"
-ln -sfn "$plugin_dir" "$runtime/Blip"
-# A copy, not a link: Quickshell resolves the config's own relative URLs from
-# the file's path, and the app is reached through the Blip link beside it.
+# An older build linked the plugin here; the scanner cannot see through it.
+[[ -L "$runtime/Blip" ]] && rm -f "$runtime/Blip"
+# A copy, not a link, so the config folder is self-contained; the plugin is
+# reached through BLIP_PLUGIN_DIR.
 if ! cmp -s "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"; then
   install -m 0644 "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"
 fi
 
-# -n: one Blip Desktop; a second start is a no-op. -d: detached, so it outlives
-# whatever launched it (the launcher entry, the bar plugin, a terminal).
-qs -p "$runtime" -n -d >/dev/null 2>&1 || true
+running() { qs -p "$runtime" ipc show >/dev/null 2>&1; }
+
+# One start at a time. `-n` alone is not enough: `-d` returns before the new
+# instance has registered, so two starts a few ms apart (the mode button's
+# hand-over and the mode file's watcher) both got through and ran two Blip
+# Desktops (omadell, 2026-11-18). The lock is held until the instance answers.
+exec 9>"$runtime/.start.lock"
+flock -w 15 9 || { echo "blip-desktop: another start is stuck" >&2; exit 75; }
+if ! running; then
+  # -n: never a second instance. -d: detached, so it outlives whatever started
+  # it (the launcher entry, the bar plugin, a terminal).
+  BLIP_PLUGIN_DIR="$plugin_dir" qs -p "$runtime" -n -d >/dev/null 2>&1 || true
+  for _ in $(seq 1 40); do running && break; sleep 0.15; done
+fi
+flock -u 9
 
 [[ "$action" == "start" ]] && exit 0
 

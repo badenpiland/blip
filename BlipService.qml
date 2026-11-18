@@ -109,9 +109,9 @@ Item {
     root.mode = root.parseMode(text)
     root.modeLoaded = true
     // The plugin is how Blip Desktop starts at login, and how a mode set from
-    // outside (blip-mode.ts, another tool) takes effect. -n makes this a no-op
-    // when Blip Desktop is already running.
-    if (root.passivePlugin) root.runDesktop("start")
+    // outside (blip-mode.ts, another tool) takes effect. A switch made HERE
+    // already started it; blip-desktop's lock makes a second start a no-op anyway.
+    if (root.passivePlugin && Date.now() - root.switchedAt > 5000) root.runDesktop("start")
   }
   FileView {
     id: modeFile
@@ -133,8 +133,10 @@ Item {
   /** The header's mode button and IPC `switchto`. Saves the choice, then hands
    *  over: the plugin starts Blip Desktop and shows it; Blip Desktop asks the
    *  plugin to show its popout (or in-shell window) and quits. */
+  property double switchedAt: 0
   function switchMode(m) {
     if (m !== "bar" && m !== "desktop") return false
+    root.switchedAt = Date.now()
     Quickshell.execDetached(["bun", root.modeScript, "set", m])
     var was = root.mode
     root.mode = m
