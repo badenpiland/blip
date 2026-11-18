@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Blip in the app launcher.** `blip-setup` installs a **Blip** entry with its own icon, running `~/bin/blip-app`:
+  focus the Blip window, or ask the plugin to open it. `blip-app --toggle` is the `SUPER+M` behaviour. The bar icon
+  still opens the popout; the launcher is the window's way in, like any app.
+- **The window has no workspace lock.** A window you open (launcher, `SUPER+M`, double-click, ⇱, a toast) opens on
+  the workspace you are on, and Blip never moves it while you use it. It only goes back to the last workspace you
+  put it on after a shell restart or a screen-wake remap. The standing "home" compositor rule is gone (and cleared
+  where an earlier version left one): with a saved workspace you no longer visited, it sent every launch there and
+  the window seemed to vanish.
+- **Before you update:** re-run `blip-setup` for the launcher entry, then `omarchy-restart-shell`.
+
 ## 2.7.0 - 2026-11-17 - any-emoji reactions, native replies, stickers and voice messages
 
 Everything since 2.6.2: 200 commits from 22 people and 42 merged pull requests. The big pieces are reactions with any

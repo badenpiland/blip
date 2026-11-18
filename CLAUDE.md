@@ -41,6 +41,8 @@ avatar.ts                           handle → ~/.cache/blip/avatars (imsg avata
 paste.ts                            clipboard snapshot → draft image in $XDG_RUNTIME_DIR/blip or text.
 toast-allowlist.ts                  local allowlist load/set helper; bounded JSON stdin, atomic private writes.
 BarWidget.qml                       the single poller, badge, toasts, IPC.
+scripts/blip-app                    the launcher entry's command: focus the window or ask IPC `app` for it;
+                                    blip-setup installs it with share/blip.desktop.in + share/blip.svg.
 Panel.qml                           list view + conversation view + compose. Renders only.
 manifest.json                       plugin id nixfred.blip
 ```
