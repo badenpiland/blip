@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   hasRealMonitor,
+  clearHomeRule,
   moveIsSafe,
   prepareRules,
   workspaceLives,
@@ -115,18 +116,39 @@ test("a floating move waits until the target workspace has a live monitor", () =
   expect(moveIsSafe("", dp1, homed)).toBe(false);
 });
 
-// No workspace lock: the only rule with a workspace is the one-shot restore
-// rule, which matches a unique per-restore title. The old standing home rule is
-// only ever CLEARED (written without a workspace), with or without a target.
-test("a restore pins nothing: one-shot restore rule, and any old home rule cleared", () => {
+// Hyprland 0.56 MERGES a re-declared named rule (probed 2026-11-18): leaving
+// `workspace` out kept the old one in force, and only `enabled = false` turned
+// it off. So the home rule is installed with `enabled = true` and cleared with
+// `enabled = false`, never by omitting the workspace.
+test("the home rule is installed explicitly enabled and cleared explicitly disabled", () => {
+  const home = homeRule("4");
+  expect(home).toContain('name = "blip-session-home", enabled = true');
+  expect(home).toContain("workspace =");
+  const clear = clearHomeRule();
+  expect(clear).toContain('name = "blip-session-home", enabled = false');
+  expect(clear).not.toContain("workspace =");
+  expect(homeRule(undefined)).toBe(clear);       // nothing to pin to: off
+  expect(homeRule("")).toBe(clear);
+});
+
+test("a restore keeps home by default, and window_workspace=current turns it off", () => {
+  // default: as Blip always did, the restored workspace stays home
+  expect(prepareRules("4", "Blip-restore-abcd")).toEqual([restoreRule("4", "Blip-restore-abcd"), homeRule("4")]);
+  expect(prepareRules("", "Blip-restore-abcd")).toEqual([restoreRule("", "Blip-restore-abcd")]);
+  // current: the one-shot restore rule only, and any standing home rule off
   for (const target of ["", "4", "work", undefined]) {
-    const [restore, home] = prepareRules(target, "Blip-restore-abcd");
-    expect(restore).toContain('name = "blip-session-restore"');
+    const [restore, home] = prepareRules(target, "Blip-restore-abcd", false);
     expect(restore).toContain('title = "^Blip-restore-abcd$"');
-    expect(home).toBe(homeRule(undefined));
-    expect(home).toContain('name = "blip-session-home"');
-    expect(home).not.toContain("workspace =");
+    expect(home).toBe(clearHomeRule());
   }
-  expect(prepareRules("4", "Blip-restore-abcd")[0]).toContain("workspace =");
-  expect(prepareRules("", "Blip-restore-abcd")[0]).not.toContain("workspace =");
+});
+
+// A remap returns the window only to a workspace that still exists: moving to a
+// gone one CREATES it, and a recreated named workspace the reader cannot reach
+// is the "vanished" window again, through the screen-wake door.
+test("a remap never recreates a workspace that is gone", () => {
+  const src = require("node:fs").readFileSync(new URL("./window-restore.ts", import.meta.url), "utf8");
+  const ret = src.slice(src.indexOf('if (action === "return") {'), src.indexOf("const lua = silentMove(args[3], args[4]);"));
+  expect(ret).toContain("if (!workspaceLives(args[3], workspaces)) process.exit(0);");
+  expect(ret.indexOf("moveIsSafe(")).toBeLessThan(ret.indexOf("workspaceLives("));
 });

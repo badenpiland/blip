@@ -67,9 +67,9 @@ FloatingWindow {
   // "was open", size and workspace in window.json; restore quietly on start.
   // Idle/DPMS remaps as a new client on the focused workspace — that is not a
   // choice. savedWorkspace is the LAST workspace the reader put it on (a user
-  // move, or where they launched it); a remap Blip did not ask for is sent back
-  // there. Blip never moves the window while it is in use, and keeps no
-  // standing compositor rule (window-restore.ts prepareRules).
+  // move, or, with window_workspace=current, where they launched it); a remap
+  // Blip did not ask for is sent back there, and nothing moves the window
+  // while it is in use. By default it is also the window's HOME (homeLock).
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/blip"
   readonly property string restoreScript: Qt.resolvedUrl("window-restore.ts").toString().replace(/^file:\/\//, "")
   property bool restoring: true
@@ -84,6 +84,11 @@ FloatingWindow {
   // the saved home's compositor rule put it on that workspace, and a home the
   // reader no longer visited made the app vanish (field report, 2026-11-18).
   property bool launchedHere: false
+  // Blip's original behaviour, the default: a standing compositor rule sends
+  // every new Blip window to its home workspace. false with
+  // `window_workspace=current` (set by BarWidget): the last workspace is only
+  // remembered, for restores and remaps.
+  property bool homeLock: true
   property bool adoptedLaunchWorkspace: false
   property string restoreTarget: ""
   // Match this shell process and this exact window, never another app's title.
@@ -141,10 +146,12 @@ FloatingWindow {
     if (restoring) return
     var decision = workspaceDecision(incoming, reason)
     if (decision === "save") {
-      // Remembered only: no compositor rule pins the window there. It is
-      // used to put the window back after a shell restart or a screen remap.
       savedWorkspace = incoming
       saveWinState()
+      // The default keeps it as HOME: a standing rule sends every new Blip
+      // window there. With window_workspace=current it is remembered only,
+      // for a shell restart or a screen remap.
+      if (homeLock && savedWorkspace !== "") runRestore("home", savedWorkspace)
     } else if (decision === "return" && savedWorkspace !== "" && hasRealScreen()) {
       runRestore("return", savedWorkspace, addr || ourAddress())
     }
@@ -197,7 +204,7 @@ FloatingWindow {
   }
   Process {
     id: prepareRestore
-    command: ["bun", win.restoreScript, "prepare", win.restoreTarget]
+    command: ["bun", win.restoreScript, "prepare", win.restoreTarget].concat(win.homeLock ? [] : ["--no-home"])
     stdout: StdioCollector {
       onStreamFinished: {
         try { win.restorationTitle = JSON.parse(text).title || "" } catch (e) { }

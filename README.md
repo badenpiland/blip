@@ -169,9 +169,12 @@ Linux side. If the Mac is asleep, the widget dims and says so.
   `~/bin/blip-app`, which focuses the window or opens it), ⇱ in the popout,
   double-click the bar icon, press `SUPER+M`, or IPC `app` for a Messages-style
   window (IPC `window` is a plain toggle). The bar icon always opens the
-  popout, window or not. The window opens on the workspace you are on and
-  stays wherever you put it; Blip only puts it back on its last workspace after
-  a shell restart or when the screen wakes. For the keybind, add
+  popout, window or not. The window lives on a **home workspace**: the last one
+  you moved it to, where it reopens and where opening Blip takes you.
+- **Prefer it like any other app?** With `window_workspace=current` in
+  `bridge.conf` the window opens on the workspace you are on, stays wherever
+  you put it, and Blip only puts it back on its last workspace after a shell
+  restart or when the screen wakes. Re-read on save, no restart. For the keybind, add
   this to `~/.config/hypr/bindings.lua` — it asks **Hyprland** where the
   window is (front → close, elsewhere → focus, none → create) instead of
   the plugin, because after an Omarchy plugin update the plugin's IPC can

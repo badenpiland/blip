@@ -73,8 +73,14 @@ describe("blip-app: launch Blip like an app", () => {
     expect(r.code).toBe(0);
     expect(r.actions).toEqual(["nixfred.blip app", 'hl.dsp.focus({ window = "address:0x20" })']);
   });
-  test("a window that never maps is not replaced by focusing an impostor", () => {
-    expect(run([], { appears: false }).actions).toEqual(["nixfred.blip app"]);
+  test("a window that never maps: no impostor is focused, and the reader is told why", () => {
+    // the stale-IPC trap: the plugin answered from a dead instance after an update
+    const r = run([], { appears: false });
+    expect(r.code).toBe(69);
+    expect(r.actions[0]).toBe("nixfred.blip app");
+    expect(r.actions.length).toBe(2);
+    expect(r.actions[1]).toStartWith("notify --app-name=Blip -- Blip Blip did not open its window.");
+    expect(r.stderr).toContain("omarchy-restart-shell");
   });
   test("a shell without Blip says so, out loud", () => {
     const r = run([], { shellOk: false });

@@ -49,8 +49,17 @@ if ! out=$(omarchy-shell nixfred.blip app 2>&1) || [ -z "$out" ]; then
   command -v notify-send >/dev/null 2>&1 && notify-send --app-name=Blip -- "Blip" "$msg"
   exit 69
 fi
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   a=$(blip_window); [ -n "$a" ] && break; sleep 0.15
 done
-[ -n "$a" ] && focus "$a"
-exit 0
+if [ -n "$a" ]; then
+  focus "$a"
+  exit 0
+fi
+# The plugin answered but no window came: after a plugin update without a shell
+# restart, IPC is served by the old, dead instance (CLAUDE.md). Say so, instead
+# of a launcher click that silently does nothing.
+msg="Blip did not open its window. If the plugin was just updated, run omarchy-restart-shell."
+echo "blip-app: $msg" >&2
+command -v notify-send >/dev/null 2>&1 && notify-send --app-name=Blip -- "Blip" "$msg"
+exit 69

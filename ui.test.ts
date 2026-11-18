@@ -953,8 +953,8 @@ test("idle remaps do not adopt the focused workspace", () => {
   expect(window).not.toContain("savedWorkspace = currentWorkspace; saveWinState()");
   expect(window).toContain('if (reason === "move") return "save"');
   expect(window).toContain('if (reason === "map" || reason === "monitor") return "return"');
-  // no lock: a remembered workspace installs no standing compositor rule
-  expect(window).not.toContain('runRestore("home"');
+  // the default keeps Blip's home rule; window_workspace=current only remembers
+  expect(window).toContain('if (homeLock && savedWorkspace !== "") runRestore("home", savedWorkspace)');
   expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
   expect(window).toContain('["bun", win.restoreScript, "prepare", win.restoreTarget]');
   expect(window).toContain("if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
@@ -968,8 +968,12 @@ test("idle remaps do not adopt the focused workspace", () => {
 // becomes its last workspace. Before, a stale home on a workspace the reader
 // no longer visited swallowed every launch (field report, 2026-11-18).
 test("a launched window opens where the reader is and remembers that workspace", () => {
-  // only ensureWindow (a show someone asked for) marks a launch; startup does not
-  expect(widget).toContain("root.windowLaunchPending = true\n      windowLoader.active = true");
+  // only ensureWindow (a show someone asked for) marks a launch, and only with
+  // window_workspace=current; startup never does, and the flag never outlives
+  // the load (a window that failed to load must not pass it to the next one)
+  expect(widget).toContain("root.windowLaunchPending = root.windowWorkspaceCurrent\n      windowLoader.active = true");
+  const ensure = widget.slice(widget.indexOf("function ensureWindow() {"), widget.indexOf("function toggleWindow()"));
+  expect(ensure.indexOf("windowLoader.active = true")).toBeLessThan(ensure.lastIndexOf("root.windowLaunchPending = false"));
   expect(widget).toContain("item.launchedHere = root.windowLaunchPending");
   expect(widget.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(widget.indexOf("item.hostWidget = root"));
   // decided a turn after creation, once onLoaded has set launchedHere
@@ -1328,3 +1332,25 @@ describe("a signed-out Mac is said before a send fails (reads work, sends cannot
   });
 });
 
+
+// Blip's original window behaviour stays the default; `window_workspace=current`
+// in bridge.conf opts into "opens where you are, stays where you put it".
+describe("window_workspace: home by default, current on request", () => {
+  test("parsed from bridge.conf like every other key, off when unreadable", () => {
+    expect(widget).toContain("root.windowWorkspaceCurrent = /^\\s*window_workspace\\s*=\\s*['\"]?current\\b/mi.test(t)");
+    expect(widget).toContain("root.windowWorkspaceCurrent = false;");
+    expect(widget).toContain("property bool windowWorkspaceCurrent: false");
+  });
+  test("the window learns its mode before it decides anything", () => {
+    const loaded = widget.slice(widget.indexOf("id: windowLoader"), widget.indexOf("property bool windowLaunchPending"));
+    expect(loaded.indexOf("item.homeLock = !root.windowWorkspaceCurrent")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
+    expect(window).toContain("property bool homeLock: true");
+    expect(window).toContain('.concat(win.homeLock ? [] : ["--no-home"])');
+  });
+  test("switching to current turns the standing home rule off at once", () => {
+    expect(widget).toContain('"window-restore.ts").toString().replace(/^file:\\/\\//, "")), "clear"])');
+  });
+  test("status says when the option is on", () => {
+    expect(widget).toContain('(root.windowWorkspaceCurrent ? " window_workspace=current" : "")');
+  });
+});

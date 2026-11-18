@@ -218,18 +218,34 @@ fi
 # focuses the Blip window or asks the plugin to open it (IPC `app`). The icon is
 # ours (share/blip.svg). Installed beside the shims, so the entry never points
 # into a checkout that may move; re-running setup refreshes all three.
-data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-install -m 0755 "$here/scripts/blip-app" "$bin_dir/blip-app"
-install -D -m 0644 "$here/share/blip.svg" "$data_home/icons/hicolor/scalable/apps/blip.svg"
-mkdir -p "$data_home/applications"
-desktop_tmp="$(mktemp "$data_home/applications/.blip.desktop.XXXXXX")"
-# Exec= takes a path, and a path with a space would need desktop-entry quoting:
-# bin_dir is validated as a plain absolute path above, so it has none to escape.
-sed "s|@BLIP_APP@|$bin_dir/blip-app|" "$here/share/blip.desktop.in" >"$desktop_tmp"
-chmod 0644 "$desktop_tmp"
-mv -f "$desktop_tmp" "$data_home/applications/blip.desktop"
-command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data_home/applications" 2>/dev/null || true
-echo "✓ app launcher entry installed: Blip ($data_home/applications/blip.desktop → $bin_dir/blip-app)"
+# Optional: a failure here is reported and setup carries on to the Mac, which
+# is what Blip actually needs. Every step returns explicitly — `set -e` does
+# not apply inside a function called from `if`.
+install_launcher() {
+  local data_home="${XDG_DATA_HOME:-$HOME/.local/share}" desktop_tmp
+  # Someone else's ~/bin/blip-app is kept, like the shims keep theirs.
+  if [[ -e "$bin_dir/blip-app" && ! -L "$bin_dir/blip-app" ]] && ! grep -q "blip-app — open Blip like an app" "$bin_dir/blip-app" 2>/dev/null; then
+    cp -p "$bin_dir/blip-app" "$bin_dir/blip-app.pre-blip.$(date +%s)" || return 1
+    echo "• backed up existing $bin_dir/blip-app"
+  fi
+  install -m 0755 "$here/scripts/blip-app" "$bin_dir/blip-app" || return 1
+  install -D -m 0644 "$here/share/blip.svg" "$data_home/icons/hicolor/scalable/apps/blip.svg" || return 1
+  # Launchers that read the icon cache would not see a new icon until it is rebuilt.
+  command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f "$data_home/icons/hicolor" 2>/dev/null
+  mkdir -p "$data_home/applications" || return 1
+  desktop_tmp="$(mktemp "$data_home/applications/.blip.desktop.XXXXXX")" || return 1
+  # Exec= takes a path, and a path with a space would need desktop-entry quoting:
+  # bin_dir is validated as a plain absolute path above, so it has none to escape.
+  if ! sed "s|@BLIP_APP@|$bin_dir/blip-app|" "$here/share/blip.desktop.in" >"$desktop_tmp" \
+     || ! chmod 0644 "$desktop_tmp" || ! mv -f "$desktop_tmp" "$data_home/applications/blip.desktop"; then
+    rm -f "$desktop_tmp"; return 1
+  fi
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data_home/applications" 2>/dev/null
+  echo "✓ app launcher entry installed: Blip ($data_home/applications/blip.desktop → $bin_dir/blip-app)"
+}
+if ! install_launcher; then
+  echo "• could not install the app launcher entry (optional) — Blip still works from the bar" >&2
+fi
 
 # The from= option for the Blip key's authorized_keys line. $1 = the address
 # this machine reached the Mac from. Over Tailscale that address is a stable
