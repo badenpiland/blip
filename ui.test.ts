@@ -969,11 +969,14 @@ test("idle remaps do not adopt the focused workspace", () => {
 // no longer visited swallowed every launch (field report, 2026-11-18).
 test("a launched window opens where the reader is and remembers that workspace", () => {
   // only ensureWindow (a show someone asked for) marks a launch, and only with
-  // window_workspace=current; startup never does, and the flag never outlives
-  // the load (a window that failed to load must not pass it to the next one)
+  // window_workspace=current; startup never does. The flag is consumed by the
+  // load itself (onLoaded) or dropped on a failed load — never cleared right
+  // after `active = true`, which ran BEFORE onLoaded on a real machine and
+  // turned every launch into a remap sent back to the last workspace.
   expect(widget).toContain("root.windowLaunchPending = root.windowWorkspaceCurrent\n      windowLoader.active = true");
   const ensure = widget.slice(widget.indexOf("function ensureWindow() {"), widget.indexOf("function toggleWindow()"));
-  expect(ensure.indexOf("windowLoader.active = true")).toBeLessThan(ensure.lastIndexOf("root.windowLaunchPending = false"));
+  expect(ensure).not.toContain("root.windowLaunchPending = false");
+  expect(widget).toContain("onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false");
   expect(widget).toContain("item.launchedHere = root.windowLaunchPending");
   expect(widget.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(widget.indexOf("item.hostWidget = root"));
   // decided a turn after creation, once onLoaded has set launchedHere

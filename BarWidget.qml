@@ -446,6 +446,12 @@ BarWidget {
     id: windowLoader
     active: root.leader                // created at start so it can self-restore
     source: Qt.resolvedUrl("BlipWindow.qml")
+    // The flag is consumed when the window LOADS, which is not necessarily
+    // within ensureWindow(): clearing it right after `active = true` cleared
+    // it before onLoaded read it, so a launch was taken for a remap and sent
+    // back to the last workspace (real machine, 2026-11-18). A window that
+    // fails to load clears it here, so it never carries over to the next one.
+    onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false
     onLoaded: {
       // A window created for a show the reader asked for opens on THEIR
       // workspace; one created by the shell itself (startup) restores.
@@ -482,9 +488,6 @@ BarWidget {
       // default restores the window to its home, as Blip always did.
       root.windowLaunchPending = root.windowWorkspaceCurrent
       windowLoader.active = true
-      // The Loader is synchronous, so onLoaded has already taken the flag; a
-      // window that FAILED to load must not leave it set for the next one.
-      root.windowLaunchPending = false
       root.refresh(true, false)          // full list, like the panel
     }
     // A fresh BlipWindow honours window.json (which may say hidden) — this
