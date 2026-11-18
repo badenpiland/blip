@@ -77,12 +77,11 @@ FloatingWindow {
   property bool explicitShow: false
   property string savedWorkspace: ""
   // Set by BarWidget when the READER opened this window (launcher, SUPER+M,
-  // double-click, a toast): it opens on the workspace they are looking at, and
-  // that becomes its last workspace, like any app. Only a window the shell
-  // brings back on its own (startup restore, a screen remap) is sent back.
-  // Before this a launch went through the same restore as a shell restart:
-  // the saved home's compositor rule put it on that workspace, and a home the
-  // reader no longer visited made the app vanish (field report, 2026-11-18).
+  // double-click, a toast). With window_workspace=current it opens on the
+  // workspace they are looking at, which becomes its last workspace, like any
+  // app; by default it opens on its home (beginRestore). Only a window the
+  // shell brings back on its own (startup restore, a screen remap) is "sent
+  // back" (field report, 2026-11-18).
   property bool launchedHere: false
   // Blip's original behaviour, the default: a standing compositor rule sends
   // every new Blip window to its home workspace. false with
@@ -137,7 +136,7 @@ FloatingWindow {
   }
   /** A launched window's first workspace is a deliberate choice: remember it. */
   function adoptLaunchWorkspace(incoming, addr) {
-    if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false
+    if (!launchedHere || homeLock || adoptedLaunchWorkspace || restoring || !incoming) return false
     adoptedLaunchWorkspace = true
     applyWorkspaceDecision(incoming, "move", addr)
     return true
@@ -264,11 +263,17 @@ FloatingWindow {
   onHostWidgetChanged: if (hostWidget && restoreWaiting) Qt.callLater(win.startRestore)
   Timer { id: restoreFallback; interval: 1000; onTriggered: win.startRestore() }
   function beginRestore(wasOpen) {
-    // A launch: open where the reader is (no target), clearing any stale home
-    // rule, through the same quiet path so the window maps under a restore
-    // title no old rule can match.
-    if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }
-    if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }
+    // window_workspace=current, a launch: open where the reader is (no
+    // target), the home rule off, through the quiet path so the window maps
+    // under a restore title no old rule can match.
+    if (launchedHere && !homeLock) { restoreTarget = ""; prepareRestore.running = true; return }
+    // The default (home), a launch OR a restore: open on the home workspace
+    // through the same path, which also (re)installs the home rule. A launch
+    // used to map plainly and rely on a home rule left in the compositor;
+    // with none (after a Hyprland restart, or a switch back from `current`)
+    // it mapped where the reader was and the stray return then moved it home
+    // WITHOUT them, so it vanished (real machine, 2026-11-18).
+    if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }
     restoring = false; restoreReady = true; if (explicitShow) visible = true
   }
   onVisibleChanged: { saveWinState(); if (visible) Qt.callLater(view.focusDefault) }

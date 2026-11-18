@@ -502,7 +502,10 @@ what it is handed. Keep it that way.
   choice. Two behaviours, chosen by `window_workspace` in bridge.conf:
   `home` (DEFAULT, Fred's original design) saves the workspace only from a
   user `movewindowv2` and keeps a live-title "home" rule (`blip-session-home`)
-  so every new Blip window maps there; `current` (opt-in) also saves where the
+  so every new Blip window maps there, and a LAUNCH goes through the restore
+  path onto home (reinstalling the rule) instead of trusting a rule left in
+  the compositor: with none, it mapped where the reader was and the stray
+  return moved it home without them; `current` (opt-in) also saves where the
   reader LAUNCHED it (`launchedHere`, set by `ensureWindow()`: it opens on the
   reader's workspace), and turns the home rule OFF (`homeLock` false,
   `prepare --no-home`, `clear` on switching). In both, a remap Blip did not ask

@@ -484,9 +484,10 @@ BarWidget {
     // covers a window the compositor closed (SUPER+M hide path).
     if (windowLoader.item && !windowLoader.item.visible) windowLoader.active = false
     if (!windowLoader.active) {
-      // Only `window_workspace=current` treats a launch as "open here"; the
-      // default restores the window to its home, as Blip always did.
-      root.windowLaunchPending = root.windowWorkspaceCurrent
+      // A show the reader asked for. With window_workspace=current it opens
+      // where they are; by default it opens on its home (BlipWindow
+      // beginRestore), as Blip always intended.
+      root.windowLaunchPending = true
       windowLoader.active = true
       root.refresh(true, false)          // full list, like the panel
     }

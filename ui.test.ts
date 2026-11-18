@@ -957,7 +957,7 @@ test("idle remaps do not adopt the focused workspace", () => {
   expect(window).toContain('if (homeLock && savedWorkspace !== "") runRestore("home", savedWorkspace)');
   expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
   expect(window).toContain('["bun", win.restoreScript, "prepare", win.restoreTarget]');
-  expect(window).toContain("if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
+  expect(window).toContain("if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
   expect(window).toContain("/^Blip( \\([0-9]+\\))?$/.test(title)");
   expect(window).toContain("id: strayReturn");
   expect(window).toContain("sameAddress");
@@ -973,7 +973,7 @@ test("a launched window opens where the reader is and remembers that workspace",
   // load itself (onLoaded) or dropped on a failed load — never cleared right
   // after `active = true`, which ran BEFORE onLoaded on a real machine and
   // turned every launch into a remap sent back to the last workspace.
-  expect(widget).toContain("root.windowLaunchPending = root.windowWorkspaceCurrent\n      windowLoader.active = true");
+  expect(widget).toContain("root.windowLaunchPending = true\n      windowLoader.active = true");
   const ensure = widget.slice(widget.indexOf("function ensureWindow() {"), widget.indexOf("function toggleWindow()"));
   expect(ensure).not.toContain("root.windowLaunchPending = false");
   expect(widget).toContain("onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false");
@@ -989,11 +989,14 @@ test("a launched window opens where the reader is and remembers that workspace",
   const loaded = widget.slice(widget.indexOf("onLoaded: {", widget.indexOf("id: windowLoader")), widget.indexOf("property bool windowLaunchPending"));
   expect(loaded.indexOf("item.launchedHere")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
   expect(loaded.indexOf("item.homeLock")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
-  expect(window).toContain('if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }');
+  expect(window).toContain('if (launchedHere && !homeLock) { restoreTarget = ""; prepareRestore.running = true; return }');
+  // the default mode launches through the restore path too, onto its home,
+  // reinstalling the home rule, instead of relying on a leftover rule
+  expect(window).toContain("if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
   // the first workspace a launched window lands on is saved as home, once,
   // before any stray-return logic can send it back
   const adopt = window.slice(window.indexOf("function adoptLaunchWorkspace("), window.indexOf("function applyWorkspaceDecision("));
-  expect(adopt).toContain("if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false");
+  expect(adopt).toContain("if (!launchedHere || homeLock || adoptedLaunchWorkspace || restoring || !incoming) return false");
   expect(adopt).toContain('applyWorkspaceDecision(incoming, "move", addr)');
   const changed = window.slice(window.indexOf("onCurrentWorkspaceChanged: {"), window.indexOf("id: strayReturn"));
   expect(changed.indexOf("adoptLaunchWorkspace(currentWorkspace, ourAddress())")).toBeLessThan(changed.indexOf("strayReturn.restart()"));
