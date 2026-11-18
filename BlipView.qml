@@ -287,6 +287,16 @@ FocusScope {
     if (!hostWidget) return
     if (typeof hostWidget.showApp === "function") hostWidget.showApp()
   }
+  /** Blip Desktop's view (its host is the service in its own process). */
+  readonly property bool desktopMode: !!hostWidget && hostWidget.desktopHost === true
+  readonly property bool canSwitchMode: !!hostWidget && typeof hostWidget.switchMode === "function"
+  /** The header's mode button: bar ⇄ desktop. The host saves the choice and
+   *  hands over; this surface closes behind it like openApp's popout does. */
+  function switchMode() {
+    closeShare()
+    if (!canSwitchMode) return
+    hostWidget.switchMode(desktopMode ? "bar" : "desktop")
+  }
   /** The sheet's keys: Esc closes, ←/→ step links, ↑/↓ move the highlight,
    *  Enter takes it, 1/2/3 pick directly. Anything else falls through to the
    *  field (a sheet over a draft never blocks typing); see openShare for
@@ -2662,6 +2672,20 @@ FocusScope {
             hoverColor: root.accent
             fontFamily: root.fontFamily
             onClicked: root.openApp()
+          }
+          // Which Blip runs: the bar plugin or Blip Desktop (its own app). Shown
+          // offline too: switching never needs the Mac. The choice is saved and
+          // wins on every start (blip-mode.ts); the service does the hand-over.
+          PanelActionButton {
+            objectName: "blipModeButton"
+            visible: root.canSwitchMode
+            iconText: root.desktopMode ? "▭" : "⧉"
+            tooltipText: root.desktopMode ? "Switch to bar mode" : "Switch to desktop mode (Blip Desktop)"
+            bordered: true
+            foreground: root.foreground
+            hoverColor: root.accent
+            fontFamily: root.fontFamily
+            onClicked: root.switchMode()
           }
         }
 

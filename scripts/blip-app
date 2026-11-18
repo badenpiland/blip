@@ -41,7 +41,20 @@ if [ -n "$a" ]; then
   exit 0
 fi
 
-# No window: ask the service to create one. A shell without the plugin's
+# No window. In desktop mode (the reader's last choice, blip-mode.ts) the app is
+# Blip Desktop, its own process: start it if needed and show it. blip-desktop
+# focuses the window itself.
+plugin_dir="${BLIP_PLUGIN_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/nixfred.blip}"
+mode_file="$HOME/.local/state/blip/mode.json"
+if [ "$(jq -r '.mode // empty' "$mode_file" 2>/dev/null)" = "desktop" ]; then
+  if [ ! -x "$plugin_dir/scripts/blip-desktop" ]; then
+    echo "blip-app: Blip Desktop is selected but $plugin_dir/scripts/blip-desktop is missing (set BLIP_PLUGIN_DIR)" >&2
+    exit 69
+  fi
+  exec "$plugin_dir/scripts/blip-desktop" show
+fi
+
+# Bar mode: ask the plugin's service to create the window. A shell without the
 # service answers with an error or nothing; say so instead of silently waiting.
 if ! out=$(omarchy-shell nixfred.blip app 2>&1) || [ -z "$out" ]; then
   msg="Blip is not running in the Omarchy shell. Enable it (omarchy plugin enable nixfred.blip), then omarchy-restart-shell."

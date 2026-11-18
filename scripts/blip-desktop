@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# blip-desktop — run Blip Desktop, Blip as its own app process.
+#
+#   blip-desktop start   start it in the background if it is not running
+#   blip-desktop show    start it if needed, then show and focus its window
+#   blip-desktop stop    stop it
+#   blip-desktop path    print its runtime config folder
+#
+#   --omarchy-shell DIR  the running Omarchy shell's folder (the bar plugin passes
+#                        its own Quickshell.shellDir, right under `omarchy dev link`
+#                        too); default ${OMARCHY_PATH:-/usr/share/omarchy}/shell
+#
+# Blip Desktop is a Quickshell config assembled in $XDG_DATA_HOME/blip/desktop:
+# desktop/shell.qml from this plugin, plus links to the Omarchy shell's Commons
+# and Ui modules (the theme) and to this plugin (Blip). Re-linked on every run,
+# so a plugin update or a moved Omarchy is picked up by the next start.
+# Which Blip runs is the saved mode (blip-mode.ts); this script only starts and
+# stops the process — Blip Desktop itself steps aside when the mode is "bar".
+set -euo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+plugin_dir="${BLIP_PLUGIN_DIR:-$here}"
+while [[ "$plugin_dir" == */ && "$plugin_dir" != "/" ]]; do plugin_dir="${plugin_dir%/}"; done
+runtime="${XDG_DATA_HOME:-$HOME/.local/share}/blip/desktop"
+omarchy_shell="${OMARCHY_PATH:-/usr/share/omarchy}/shell"
+
+action="${1:-show}"
+shift || true
+while (($#)); do
+  case "$1" in
+    --omarchy-shell) omarchy_shell="${2:-}"; shift 2 ;;
+    *) echo "blip-desktop: unknown option: $1" >&2; exit 64 ;;
+  esac
+done
+
+case "$action" in start|show|stop|path) ;; -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "blip-desktop: unknown action: $action" >&2; exit 64 ;;
+esac
+
+if [[ "$action" == "path" ]]; then echo "$runtime"; exit 0; fi
+if [[ "$action" == "stop" ]]; then
+  qs kill -p "$runtime" >/dev/null 2>&1 || true
+  exit 0
+fi
+
+[[ -f "$plugin_dir/BlipService.qml" && -f "$plugin_dir/desktop/shell.qml" ]] || {
+  echo "blip-desktop: no Blip plugin at $plugin_dir" >&2; exit 69; }
+[[ -d "$omarchy_shell/Commons" && -d "$omarchy_shell/Ui" ]] || {
+  echo "blip-desktop: no Omarchy shell modules at $omarchy_shell (Commons, Ui)" >&2; exit 69; }
+command -v qs >/dev/null 2>&1 || { echo "blip-desktop: qs (Quickshell) not found" >&2; exit 69; }
+
+mkdir -p "$runtime"
+chmod 700 "$runtime" 2>/dev/null || true
+ln -sfn "$omarchy_shell/Commons" "$runtime/Commons"
+ln -sfn "$omarchy_shell/Ui" "$runtime/Ui"
+ln -sfn "$plugin_dir" "$runtime/Blip"
+# A copy, not a link: Quickshell resolves the config's own relative URLs from
+# the file's path, and the app is reached through the Blip link beside it.
+if ! cmp -s "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"; then
+  install -m 0644 "$plugin_dir/desktop/shell.qml" "$runtime/shell.qml"
+fi
+
+# -n: one Blip Desktop; a second start is a no-op. -d: detached, so it outlives
+# whatever launched it (the launcher entry, the bar plugin, a terminal).
+qs -p "$runtime" -n -d >/dev/null 2>&1 || true
+
+[[ "$action" == "start" ]] && exit 0
+
+# show: the IPC target appears once the config has loaded.
+for _ in $(seq 1 40); do
+  if out="$(qs -p "$runtime" ipc call nixfred.blip app 2>/dev/null)" && [[ -n "$out" ]]; then
+    exit 0
+  fi
+  sleep 0.15
+done
+echo "blip-desktop: Blip Desktop did not answer (see: qs log -p $runtime)" >&2
+exit 69

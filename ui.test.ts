@@ -459,10 +459,12 @@ describe("QML safety invariants", () => {
     // directory, and equals the stock path on a stock box.
     expect(widget).toContain("readonly property string shellRoot: String(Quickshell.shellDir)");
     expect(widget).not.toContain('"-p", "/usr/share/omarchy/shell"');
-    // Every forward uses it, none re-hardcodes the path.
+    // Every forward names a running instance by a computed path, none
+    // re-hardcodes one: the shell (shellRoot), or Blip Desktop's own config
+    // (desktopRuntime) when a passive plugin forwards to it.
     const forwards = widget.match(/"qs", "-p", [^,]+,/g) ?? [];
     expect(forwards.length).toBeGreaterThan(0);
-    for (const f of forwards) expect(f).toContain("root.shellRoot");
+    for (const f of forwards) expect(/root\.(shellRoot|desktopRuntime)/.test(f) ? "computed" : f).toBe("computed");
   });
 
   test("a panel hotkey on a follower screen reaches the leader's panel", () => {
@@ -916,12 +918,14 @@ test("an unresolved window only claims the crown when it is the only screen", ()
 // `running: root.leader` binding permanently, so from the first restart a
 // follower watched, refreshed and toasted forever: one duplicate desktop
 // notification per extra screen, until the shell was restarted.
+// `leader` became `owns` when modes arrived: the one copy that owns (the plugin
+// in bar mode, Blip Desktop in desktop mode) is the only one that watches.
 test("the watch restart restores the leader binding, never a bare true", () => {
-  expect(widget).toContain("running: root.leader");
+  expect(widget).toContain("running: root.owns");
   expect(widget).not.toMatch(/watchProc\.running\s*=\s*true\b/);
   const restart = widget.slice(widget.indexOf("id: watchRestart"),
                                widget.indexOf("// ---", widget.indexOf("id: watchRestart")));
-  expect(restart).toMatch(/running\s*=\s*Qt\.binding\(function\s*\(\)\s*\{\s*return root\.leader( && root\.bridgeConfLoaded)?\s*\}\)/);
+  expect(restart).toMatch(/running\s*=\s*Qt\.binding\(function\s*\(\)\s*\{\s*return root\.owns( && root\.bridgeConfLoaded)?\s*\}\)/);
 });
 
 // A URL out of a message is message content: stdin to the preview fetcher, never argv.
@@ -1244,7 +1248,7 @@ describe("the accelerator channel is an optimisation, never a dependency", () =>
     // From bin_dir, like every other shim: a fixed ~/bin would miss a moved install.
     expect(widget).toContain('command: [root.binDir + "/blip-bridged"]');
     const proc = widget.slice(widget.indexOf("id: bridgeProc"), widget.indexOf("id: bridgeRestart"));
-    expect(proc).toContain("running: root.leader && root.bridgeConfLoaded");
+    expect(proc).toContain("running: root.owns && root.bridgeConfLoaded");   // the owner only (was: leader)
     expect(proc).toContain("onExited: bridgeRestart.restart()");
   });
 });
@@ -1257,7 +1261,7 @@ test("the bridge restart restores the leader binding, never a bare true", () => 
   expect(widget).not.toMatch(/bridgeProc\.running\s*=\s*true\b/);
   const restart = widget.slice(widget.indexOf("id: bridgeRestart"),
                                widget.indexOf("// ---", widget.indexOf("id: bridgeRestart")));
-  expect(restart).toMatch(/running\s*=\s*Qt\.binding\(function\s*\(\)\s*\{\s*return root\.leader && root\.bridgeConfLoaded\s*\}\)/);
+  expect(restart).toMatch(/running\s*=\s*Qt\.binding\(function\s*\(\)\s*\{\s*return root\.owns && root\.bridgeConfLoaded\s*\}\)/);
 });
 
 // show() refuses a leading "+" (qs ipc reads it as a flag), so the toast click

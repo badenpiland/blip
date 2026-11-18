@@ -81,6 +81,10 @@ FloatingWindow {
   // the saved home's compositor rule put it on that workspace, and a home the
   // reader no longer visited made the app vanish (omadell, 2026-11-18).
   property bool launchedHere: false
+  // false in Blip Desktop (BlipService sets it): its own process is never
+  // recreated by a shell restart, so it keeps NO home workspace — no saved
+  // home, no returns, no home rule. It stays wherever the reader puts it.
+  property bool homeTracking: true
   property bool adoptedLaunchWorkspace: false
   property string restoreTarget: ""
   // Match this shell process and this exact window, never another app's title.
@@ -135,7 +139,7 @@ FloatingWindow {
     return true
   }
   function applyWorkspaceDecision(incoming, reason, addr) {
-    if (restoring) return
+    if (restoring || !homeTracking) return
     var decision = workspaceDecision(incoming, reason)
     if (decision === "save") {
       savedWorkspace = incoming
@@ -236,6 +240,13 @@ FloatingWindow {
     Qt.callLater(function() { win.beginRestore(wasOpen) })
   }
   function beginRestore(wasOpen) {
+    // Blip Desktop: open where the reader is, through the quiet path that
+    // also clears any home rule the bar mode left in the compositor.
+    if (!homeTracking) {
+      if (launchedHere || wasOpen) { restoreTarget = ""; prepareRestore.running = true; return }
+      restoring = false; restoreReady = true; if (explicitShow) visible = true
+      return
+    }
     // A launch: open where the reader is (no target), clearing any stale home
     // rule, through the same quiet path so the window maps under a restore
     // title no old rule can match.

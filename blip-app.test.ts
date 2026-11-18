@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,8 +20,8 @@ const impostors = [
 
 /** Run blip-app against a fake Hyprland. `appears` = the window maps once
  *  the service is asked for it; `shellOk` = omarchy-shell reaches the target. */
-function run(args: string[], opts: { title?: string | null; focused?: boolean; appears?: boolean; shellOk?: boolean } = {}) {
-  const { title = null, focused = false, appears = true, shellOk = true } = opts;
+function run(args: string[], opts: { title?: string | null; focused?: boolean; appears?: boolean; shellOk?: boolean; mode?: string } = {}) {
+  const { title = null, focused = false, appears = true, shellOk = true, mode } = opts;
   const dir = mkdtempSync(join(tmpdir(), "blip-app-"));
   try {
     const client = { class: "org.quickshell", title: title ?? "Blip", address: "0x20" };
@@ -42,8 +42,13 @@ esac
     writeFileSync(join(dir, "notify-send"), '#!/bin/sh\nprintf "notify %s\\n" "$*" >> "$FIXTURE/actions"\n', { mode: 0o755 });
     writeFileSync(join(dir, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     writeFileSync(join(dir, "actions"), "");
+    // A fake home (the saved mode) and a fake plugin whose blip-desktop records.
+    mkdirSync(join(dir, "home/.local/state/blip"), { recursive: true });
+    if (mode) writeFileSync(join(dir, "home/.local/state/blip/mode.json"), JSON.stringify({ mode }));
+    mkdirSync(join(dir, "plugin/scripts"), { recursive: true });
+    writeFileSync(join(dir, "plugin/scripts/blip-desktop"), '#!/bin/sh\nprintf "blip-desktop %s\\n" "$*" >> "$FIXTURE/actions"\n', { mode: 0o755 });
     const result = Bun.spawnSync(["bash", script, ...args], {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FIXTURE: dir },
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FIXTURE: dir, HOME: join(dir, "home"), BLIP_PLUGIN_DIR: join(dir, "plugin") },
     });
     return {
       code: result.exitCode,
@@ -86,6 +91,20 @@ describe("blip-app: launch Blip like an app", () => {
   });
   test("an unknown option is refused", () => {
     expect(run(["--bogus"]).code).toBe(64);
+  });
+  test("desktop mode: no window means start and show Blip Desktop, never the plugin", () => {
+    const r = run([], { mode: "desktop" });
+    expect(r.code).toBe(0);
+    expect(r.actions).toEqual(["blip-desktop show"]);
+  });
+  test("desktop mode: an open Blip Desktop window is focused like any other", () => {
+    expect(run([], { mode: "desktop", title: "Blip" }).actions).toEqual(['hl.dsp.focus({ window = "address:0x20" })']);
+    expect(run(["--toggle"], { mode: "desktop", title: "Blip", focused: true }).actions)
+      .toEqual(['hl.dsp.window.close({ window = "address:0x20" })']);
+  });
+  test("bar mode, or no saved mode at all, asks the plugin", () => {
+    expect(run([], { mode: "bar" }).actions[0]).toBe("nixfred.blip app");
+    expect(run([], { mode: "tray" }).actions[0]).toBe("nixfred.blip app");
   });
 });
 

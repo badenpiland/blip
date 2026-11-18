@@ -73,6 +73,121 @@ Item {
     return false
   }
 
+  // ---- which Blip runs: "bar" (this plugin, inside the Omarchy shell) or
+  // "desktop" (Blip Desktop, the same service in its own process; see
+  // desktop/shell.qml). The LAST choice the reader made wins on every start:
+  // it is state written by the header's mode button or IPC `switchto`, in
+  // ~/.local/state/blip/mode.json (blip-mode.ts owns the format), never a
+  // bridge.conf default. No file = "bar", which is Blip before modes existed.
+  //
+  // Exactly one copy OWNS at a time: polls, watches, runs blip-bridged, toasts,
+  // holds the window. The other is passive. A passive plugin still draws the
+  // bar icon (badge from state.json) and forwards every "open" to Blip Desktop.
+  property bool desktopHost: false   // set by desktop/shell.qml before first use
+  property string mode: "bar"
+  property bool modeLoaded: false
+  readonly property bool owns: leader && modeLoaded && (desktopHost ? mode === "desktop" : mode === "bar")
+  readonly property bool passivePlugin: !desktopHost && modeLoaded && mode === "desktop"
+  readonly property string modeScript:
+    decodeURIComponent(Qt.resolvedUrl("blip-mode.ts").toString().replace(/^file:\/\//, ""))
+  readonly property string desktopScript:
+    decodeURIComponent(Qt.resolvedUrl("scripts/blip-desktop").toString().replace(/^file:\/\//, ""))
+  // Where blip-desktop assembles Blip Desktop's config: `qs -p` names it.
+  readonly property string desktopRuntime: {
+    var d = String(Quickshell.env("XDG_DATA_HOME") || "")
+    return (d.charAt(0) === "/" ? d : root.home + "/.local/share") + "/blip/desktop"
+  }
+  /** Same contract as parseMode() in blip-mode.ts: only an exact mode counts. */
+  function parseMode(text) {
+    try {
+      var d = JSON.parse(String(text || ""))
+      if (d && (d.mode === "bar" || d.mode === "desktop")) return d.mode
+    } catch (e) { }
+    return "bar"
+  }
+  function applyMode(text) {
+    root.mode = root.parseMode(text)
+    root.modeLoaded = true
+    // The plugin is how Blip Desktop starts at login, and how a mode set from
+    // outside (blip-mode.ts, another tool) takes effect. -n makes this a no-op
+    // when Blip Desktop is already running.
+    if (root.passivePlugin) root.runDesktop("start")
+  }
+  FileView {
+    id: modeFile
+    path: root.home + "/.local/state/blip/mode.json"
+    watchChanges: true
+    printErrors: false
+    blockLoading: true
+    onFileChanged: reload()
+    onLoaded: root.applyMode(text())
+    onLoadFailed: root.applyMode("")
+  }
+  function runDesktop(action) {
+    Quickshell.execDetached([root.desktopScript, action, "--omarchy-shell", root.shellRoot])
+  }
+  /** Talk to Blip Desktop's own IPC target (a passive plugin's clicks). */
+  function callDesktop(method) {
+    Quickshell.execDetached(["qs", "-p", root.desktopRuntime, "ipc", "call", root.moduleName, method])
+  }
+  /** The header's mode button and IPC `switchto`. Saves the choice, then hands
+   *  over: the plugin starts Blip Desktop and shows it; Blip Desktop asks the
+   *  plugin to show its popout (or in-shell window) and quits. */
+  function switchMode(m) {
+    if (m !== "bar" && m !== "desktop") return false
+    Quickshell.execDetached(["bun", root.modeScript, "set", m])
+    var was = root.mode
+    root.mode = m
+    root.modeLoaded = true
+    if (m === was) return true
+    if (m === "desktop" && !root.desktopHost) {
+      root.closePanel()
+      root.hideWindow()
+      root.runDesktop("show")
+    } else if (m === "bar" && root.desktopHost) {
+      // The plugin gets the mode on the IPC itself, so it never races the
+      // file watch, then opens where the reader expects Blip to be.
+      Quickshell.execDetached(["omarchy-shell", root.moduleName, "switchto", "bar"])
+    }
+    return true
+  }
+  // Blip Desktop has nothing to do once it no longer owns: it quits, and the
+  // plugin (which owns from the same moment) is the app again.
+  Timer {
+    id: desktopQuit
+    interval: 400
+    onTriggered: if (root.desktopHost && root.modeLoaded && root.mode !== "desktop") Qt.quit()
+  }
+  onOwnsChanged: {
+    if (root.owns) { root.reloadToastAllowlist(); return }
+    // Stepping aside: no window, no popout. (ensureWindow assigns the Loader's
+    // `active`, which replaces its binding, so it is cleared by hand here.)
+    root.closePanel()
+    if (windowLoader.item) windowLoader.item.visible = false
+    windowLoader.active = false
+    if (root.desktopHost) desktopQuit.restart()
+  }
+
+  // ---- the passive plugin's badge: Blip Desktop writes state.json; the bar
+  // icon counts unread conversations from it (the multi-monitor follower's
+  // trick before the service existed). Online until state says otherwise.
+  FileView {
+    id: passiveState
+    path: root.passivePlugin ? root.home + "/.local/state/blip/state.json" : ""
+    watchChanges: root.passivePlugin
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: if (root.passivePlugin) {
+      try {
+        var st = JSON.parse(text())
+        var counts = st.unreadCounts || {}
+        var n = 0
+        for (var k in counts) if ((Number(counts[k]) || 0) > 0) n++
+        root.unread = n; root.online = true; root.healthy = true; root.lastError = ""
+      } catch (e) {}
+    }
+  }
+
   readonly property string home: Quickshell.env("HOME")
   // Every follower->leader forward runs `qs -p <shell> ipc call`, and `-p` has
   // to name the shell that is ACTUALLY running: `qs` matches instances by their
@@ -225,7 +340,7 @@ Item {
   readonly property string toastAllowlistError: toastAllowlistSaveError || toastAllowlistLoadError
 
   function reloadToastAllowlist() {
-    if (!root.leader) return
+    if (!root.owns) return
     root.toastAllowlistReloadPending = true
     toastAllowlistRefresh.restart()
   }
@@ -242,7 +357,7 @@ Item {
     return true
   }
   function setToastAllowed(chat, handle, enabled) {
-    if (!root.leader || !root.toastAllowlistReady) return false
+    if (!root.owns || !root.toastAllowlistReady) return false
     root.toastAllowlistSaveError = ""
     return root.runToastAllowlist({ action: "set", chat: String(chat), handle: String(handle), enabled: enabled })
   }
@@ -271,20 +386,19 @@ Item {
     id: toastAllowlistRefresh
     interval: 0
     onTriggered: {
-      if (!root.leader || root.toastAllowlistBusy || !root.toastAllowlistReloadPending) return
+      if (!root.owns || root.toastAllowlistBusy || !root.toastAllowlistReloadPending) return
       root.toastAllowlistReloadPending = false
       root.runToastAllowlist({ action: "load" })
     }
   }
   FileView {
     id: toastAllowlistFile
-    path: root.leader ? root.home + "/.config/blip/allowlist.json" : ""
-    watchChanges: root.leader
+    path: root.owns ? root.home + "/.config/blip/allowlist.json" : ""
+    watchChanges: root.owns
     printErrors: false
     onFileChanged: { reload(); root.reloadToastAllowlist() }
     Component.onCompleted: root.reloadToastAllowlist()
   }
-  onLeaderChanged: if (root.leader) root.reloadToastAllowlist()
   Process {
     id: toastAllowlistProc
     command: ["bun", root.toastAllowlistScript]
@@ -341,9 +455,12 @@ Item {
   // and restores size + "was open" on creation.
   Loader {
     id: windowLoader
-    active: root.leader                // created at start so it can self-restore
+    active: root.owns                  // created at start so it can self-restore
     source: Qt.resolvedUrl("BlipWindow.qml")
     onLoaded: {
+      // Blip Desktop is its own process: shell restarts never recreate its
+      // window, so it keeps no home workspace and stays where it is put.
+      item.homeTracking = !root.desktopHost
       // A window created for a show the reader asked for opens on THEIR
       // workspace; one created by the shell itself (startup) restores home.
       item.launchedHere = root.windowLaunchPending
@@ -359,6 +476,7 @@ Item {
     windowLoader.active = false
   }
   function ensureWindow() {
+    if (root.passivePlugin) { root.runDesktop("show"); return }
     // An existing-but-hidden FloatingWindow is never re-mapped by Quickshell
     // (setting visible=true shows nothing). Recreate it instead — this also
     // covers a window the compositor closed (SUPER+M hide path).
@@ -378,6 +496,7 @@ Item {
    *  property straight after showing still says hidden — IPC `window` reported
    *  "window hidden" on both paths and could never say it had shown one. */
   function toggleWindow() {
+    if (root.passivePlugin) { root.runDesktop("show"); return true }
     if (root.windowVisible) { hideWindow(); return false }
     ensureWindow()
     return true
@@ -386,6 +505,8 @@ Item {
   // the user, and a plain toggle would HIDE it ("SUPER+M doesn't load the
   // app"). Hyprland ≥0.56 dispatch takes Lua; classic focuswindow is rejected.
   function showApp() {
+    // Desktop mode: the app is Blip Desktop; the plugin only points at it.
+    if (root.passivePlugin) { root.runDesktop("show"); return }
     // The popout gets out of the way first: the window is the same view,
     // larger. Here, once, so double-click, the ⇱ button and IPC `app` (a
     // SUPER+M bind) all agree — `app` used to leave the popout open.
@@ -409,15 +530,18 @@ Item {
   function closePanel() { if (root.panelHost) root.panelHost.closePanel() }
   /** "Open Blip": the popout when there is one, else the app window. */
   function open() {
-    if (root.panelHost) root.panelHost.openOn("")
+    if (root.passivePlugin) root.runDesktop("show")
+    else if (root.panelHost) root.panelHost.openOn("")
     else root.showApp()
   }
   function toggleOn(screenName) {
-    if (root.panelHost) root.panelHost.toggleOn(screenName)
+    if (root.passivePlugin) root.runDesktop("show")
+    else if (root.panelHost) root.panelHost.toggleOn(screenName)
     else root.toggleWindow()
   }
   function openOn(screenName) {
-    if (root.panelHost) root.panelHost.openOn(screenName)
+    if (root.passivePlugin) root.runDesktop("show")
+    else if (root.panelHost) root.panelHost.openOn(screenName)
     else root.showApp()
   }
   /** Open a conversation by chat id. Returns false when the id is not one —
@@ -514,6 +638,8 @@ Item {
   property bool collectorReserved: false // a queued run owns the next event-loop turn
 
   function refresh(deep, markRead, readChat, seen, unreadChat, act, actTarget) {
+    // The passive plugin has no collector: Blip Desktop's is the one.
+    if (root.passivePlugin) { root.callDesktop("refresh"); return }
     var req = { deep: deep === true, markRead: markRead === true,
                 readChat: String(readChat || ""), seen: String(seen || ""),
                 unreadChat: String(unreadChat || ""),
@@ -644,6 +770,7 @@ Item {
   }
 
   function markAllRead() {
+    if (root.passivePlugin) { root.callDesktop("read"); return }
     localUnreads = ({})
     for (var i = 0; i < threads.length; i++)
       noteLocalRead(String(threads[i].chat), String(threads[i].last_ts || ""))
@@ -787,7 +914,7 @@ Item {
     // 60 s while the watcher is alive: the watcher pushes arrivals, so this
     // poll is only a safety net. #120 cut it to 10 s, six times the ssh cost.
     interval: root.watchAlive ? 60000 : (root.online ? 6000 : 30000)
-    running: root.leader
+    running: root.owns
     repeat: true
     triggeredOnStart: true
     // While the panel is open keep the wide window, or the list would shrink
@@ -814,7 +941,7 @@ Item {
     id: bridgeProc
     command: [root.binDir + "/blip-bridged"]
     // After bridge.conf is read, like the watcher: bin_dir= moves the daemon too.
-    running: root.leader && root.bridgeConfLoaded
+    running: root.owns && root.bridgeConfLoaded
     onExited: bridgeRestart.restart()
   }
   Timer {
@@ -826,8 +953,8 @@ Item {
     // Restore the BINDING, never a bare `true` (see watchRestart): a plain
     // assignment replaces `running: leader && bridgeConfLoaded` for the life of
     // the process, so a daemon restarted after a crash outlived losing leadership.
-    onTriggered: if (root.leader && root.bridgeConfLoaded)
-      bridgeProc.running = Qt.binding(function() { return root.leader && root.bridgeConfLoaded })
+    onTriggered: if (root.owns && root.bridgeConfLoaded)
+      bridgeProc.running = Qt.binding(function() { return root.owns && root.bridgeConfLoaded })
   }
 
   // ------------------------------------------------- real-time push
@@ -843,7 +970,7 @@ Item {
   Process {
     id: watchProc
     command: [root.binDir + "/imsg", "watch"]
-    running: root.leader && root.bridgeConfLoaded
+    running: root.owns && root.bridgeConfLoaded
     // arm liveness at START: a watcher that hangs before "ready" was never
     // killed or restarted (war room #20)
     onStarted: watchLiveness.restart()
@@ -908,7 +1035,7 @@ Item {
     // watcher was correctly killed by the leader gate restarted itself one
     // backoff later and then watched, refreshed and toasted forever — one
     // duplicate desktop notification per extra screen.
-    onTriggered: watchProc.running = Qt.binding(function() { return root.leader && root.bridgeConfLoaded })
+    onTriggered: watchProc.running = Qt.binding(function() { return root.owns && root.bridgeConfLoaded })
   }
 
   // ------------------------------------------------------------ toasts
@@ -1047,7 +1174,7 @@ Item {
   // only the private autofill helper owns a pending code; the legacy toast,
   // clipboard and typecode paths do not receive it.
   property bool otpAutofill: false
-  OtpAutofill { id: otp; enabled: root.leader && root.otpAutofill; appearance: root.appearance }
+  OtpAutofill { id: otp; enabled: root.owns && root.otpAutofill; appearance: root.appearance }
   onOtpAutofillChanged: if (otpAutofill) {
     root.pendingCode = null
     codeExpiry.stop()
@@ -1232,6 +1359,7 @@ Item {
     function status(): string {
       var w = windowLoader.item
       return "online=" + root.online + " unread=" + root.unread + " leader=" + root.leader
+        + " mode=" + root.mode + " owns=" + root.owns + (root.desktopHost ? " host=desktop" : " host=bar")
         + " bar=" + (root.panelHost ? "yes" : "no")
         + " window=" + (w && w.visible ? (w.focused ? "focused" : "unfocused") : "hidden")
         + " threads=" + root.threads.length + " healthy=" + root.healthy
@@ -1276,6 +1404,14 @@ Item {
     function newchat(query: string): string { if (!root.automationOn) return root.automationOff; return root.panel ? root.panel.newChatFor(query) : "no panel" }
     function window(): string { return root.toggleWindow() ? "window shown" : "window hidden" }
     function app(): string { root.showApp(); return "app shown + focused" }
+    /** Which Blip runs ("bar" | "desktop"); the header's mode button. */
+    function switchto(m: string): string {
+      if (!root.switchMode(m)) return "unknown mode — use bar or desktop"
+      // The plugin taking over from Blip Desktop shows itself where it lives.
+      if (m === "bar" && !root.desktopHost) Qt.callLater(root.open)
+      return "mode=" + m
+    }
+    function getmode(): string { return root.mode }
     function windowgoto(chat: string): string {
       if (!root.automationOn) return root.automationOff
       root.ensureWindow()

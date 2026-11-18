@@ -58,7 +58,9 @@ BarWidget {
   // screen nobody leads (screen-leader.ts).
   readonly property var ownScreen: QsWindow.window ? QsWindow.window.screen : null
   readonly property bool leader: ScreenLeader.isLeader(ownScreen, Quickshell.screens)
-  readonly property bool hostsPanel: leader && service !== null
+  // Bar mode only: in desktop mode Blip Desktop is the app, and a click on
+  // the icon opens it instead of a popout (BlipService.passivePlugin).
+  readonly property bool hostsPanel: leader && service !== null && service.owns === true
   onHostsPanelChanged: syncRegistration()
   onServiceChanged: { syncRegistration(); injectPanel() }
   Component.onCompleted: syncRegistration()
@@ -170,6 +172,7 @@ BarWidget {
         parts.push("  " + hot[i].name + " (" + hot[i].unread + ")")
     }
     if (service.online && !service.healthy && service.lastError !== "") parts.push("⚠ " + service.lastError)
+    if (service.passivePlugin) return parts.join("\n") + "\nclick: Blip Desktop · middle: refresh · right: mark all read"
     return parts.join("\n") + "\nclick: threads · double-click: app · middle: refresh · right: mark all read"
   }
 
