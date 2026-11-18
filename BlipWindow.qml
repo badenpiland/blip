@@ -66,13 +66,26 @@ FloatingWindow {
   // omarchy-restart-shell (every plugin deploy/update) would kill it. Remember
   // "was open", size and workspace in window.json; restore quietly on start.
   // Idle/DPMS remaps as a new client on the focused workspace — that is not a
-  // new home. Only a user move updates savedWorkspace; a remap is sent back.
+  // choice. savedWorkspace is the LAST workspace the reader put it on (a user
+  // move, or where they launched it); a remap Blip did not ask for is sent back
+  // there. Blip never moves the window while it is in use, and keeps no
+  // standing compositor rule (window-restore.ts prepareRules).
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/blip"
   readonly property string restoreScript: Qt.resolvedUrl("window-restore.ts").toString().replace(/^file:\/\//, "")
   property bool restoring: true
   property bool restoreReady: false
   property bool explicitShow: false
   property string savedWorkspace: ""
+  // Set by BarWidget when the READER opened this window (launcher, SUPER+M,
+  // double-click, a toast): it opens on the workspace they are looking at, and
+  // that becomes its last workspace, like any app. Only a window the shell
+  // brings back on its own (startup restore, a screen remap) is sent back.
+  // Before this a launch went through the same restore as a shell restart:
+  // the saved home's compositor rule put it on that workspace, and a home the
+  // reader no longer visited made the app vanish (field report, 2026-11-18).
+  property bool launchedHere: false
+  property bool adoptedLaunchWorkspace: false
+  property string restoreTarget: ""
   // Match this shell process and this exact window, never another app's title.
   readonly property var ownToplevel: Hyprland.toplevels.values.find(function(t) {
     return Number(t.lastIpcObject.pid) === Quickshell.processId && t.title === win.title
@@ -117,13 +130,21 @@ FloatingWindow {
     }
     return false
   }
+  /** A launched window's first workspace is a deliberate choice: remember it. */
+  function adoptLaunchWorkspace(incoming, addr) {
+    if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false
+    adoptedLaunchWorkspace = true
+    applyWorkspaceDecision(incoming, "move", addr)
+    return true
+  }
   function applyWorkspaceDecision(incoming, reason, addr) {
     if (restoring) return
     var decision = workspaceDecision(incoming, reason)
     if (decision === "save") {
+      // Remembered only: no compositor rule pins the window there. It is
+      // used to put the window back after a shell restart or a screen remap.
       savedWorkspace = incoming
       saveWinState()
-      if (savedWorkspace !== "") runRestore("home", savedWorkspace)
     } else if (decision === "return" && savedWorkspace !== "" && hasRealScreen()) {
       runRestore("return", savedWorkspace, addr || ourAddress())
     }
@@ -138,7 +159,8 @@ FloatingWindow {
       if (name === "openwindow") {
         var open = win.eventParts(event, 4)
         var title = String(open[3] || "")
-        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title))
+        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title)
+            && !win.adoptLaunchWorkspace(String(open[1] || ""), String(open[0] || "")))
           win.applyWorkspaceDecision(String(open[1] || ""), "map", String(open[0] || ""))
       } else if (name === "movewindowv2") {
         var moved = win.eventParts(event, 3)
@@ -153,6 +175,7 @@ FloatingWindow {
   }
   onCurrentWorkspaceChanged: {
     if (restoring || currentWorkspace === "") return
+    if (adoptLaunchWorkspace(currentWorkspace, ourAddress())) return
     if (savedWorkspace === "") applyWorkspaceDecision(currentWorkspace, "map", ourAddress())
     else if (currentWorkspace !== savedWorkspace) strayReturn.restart()
   }
@@ -174,7 +197,7 @@ FloatingWindow {
   }
   Process {
     id: prepareRestore
-    command: ["bun", win.restoreScript, "prepare", win.savedWorkspace]
+    command: ["bun", win.restoreScript, "prepare", win.restoreTarget]
     stdout: StdioCollector {
       onStreamFinished: {
         try { win.restorationTitle = JSON.parse(text).title || "" } catch (e) { }
@@ -205,13 +228,24 @@ FloatingWindow {
       "blip", stateDir, j])
   }
   Component.onCompleted: {
+    var wasOpen = false
     try {
       var d = JSON.parse(winState.text())
       if (d && d.width >= 720 && d.height >= 480) { implicitWidth = d.width; implicitHeight = d.height }
       if (d && typeof d.workspace === "string") savedWorkspace = d.workspace
-      if (d && d.visible === true) { prepareRestore.running = true; return }
+      wasOpen = !!d && d.visible === true
     } catch (e) { /* first run */ }
-    Qt.callLater(function() { win.restoring = false; win.restoreReady = true; if (win.explicitShow) win.visible = true })
+    // Decided a turn later: BarWidget sets launchedHere in the Loader's
+    // onLoaded, which runs after this handler.
+    Qt.callLater(function() { win.beginRestore(wasOpen) })
+  }
+  function beginRestore(wasOpen) {
+    // A launch: open where the reader is (no target), clearing any stale home
+    // rule, through the same quiet path so the window maps under a restore
+    // title no old rule can match.
+    if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }
+    if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }
+    restoring = false; restoreReady = true; if (explicitShow) visible = true
   }
   onVisibleChanged: { saveWinState(); if (visible) Qt.callLater(view.focusDefault) }
   onWidthChanged: if (visible) saveWinState()

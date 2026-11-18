@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-/** Prepare a restored window and keep it on its last home across remaps. */
+/** Prepare a restored window, and send it back to its last workspace after a remap. */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
@@ -47,9 +47,28 @@ export function restoreRule(workspace: unknown, title: string): string {
   return `hl.window_rule({ name = "blip-session-restore", match = { class = "^org\\\\.quickshell$", title = "^${title}$" }, no_initial_focus = true${target ? `, workspace = ${luaString(target + " silent")}` : ""} })`;
 }
 
+/**
+ * The rule older Blip versions kept installed to pin every new Blip window to a
+ * saved "home" workspace. Blip no longer installs one with a workspace: it is
+ * written only WITHOUT one, to clear a rule an earlier version left behind (a
+ * named rule outlives the plugin until Hyprland reloads). Keep the name.
+ */
 export function homeRule(workspace: unknown): string {
   const target = workspaceSelector(workspace);
   return `hl.window_rule({ name = "blip-session-home", match = { class = ${luaString("^org\\.quickshell$")}, title = ${luaString("^Blip( \\([0-9]+\\))?$")} }, no_initial_focus = true${target ? `, workspace = ${luaString(target + " silent")}` : ""} })`;
+}
+
+/**
+ * The compositor rules a restore installs, in order: a ONE-SHOT rule matching
+ * only this window's unique restore title (open quietly on the last workspace,
+ * or where the reader is when there is none), then a clear of any old home
+ * rule. No standing rule pins Blip anywhere: a persistent "home" rule sent
+ * every later launch to that workspace, and with a home on a workspace the
+ * reader no longer visited the window vanished the moment they looked away
+ * (field report, 2026-11-18).
+ */
+export function prepareRules(workspace: unknown, title: string): string[] {
+  return [restoreRule(workspace, title), homeRule(undefined)];
 }
 
 export function silentMove(workspace: unknown, address: unknown): string | null {
@@ -129,15 +148,8 @@ function hyprDispatch(lua: string): boolean {
 
 if (import.meta.main) {
   const action = process.argv[2] || "prepare";
-  if (action === "home") {
-    if (!hyprEval(homeRule(process.argv[3]))) {
-      console.error("Blip could not keep the window on its workspace");
-      process.exit(1);
-    }
-    process.exit(0);
-  }
   if (action === "return") {
-    // No output, no move: the next monitoradded sends the window home.
+    // No output, no move: the next monitoradded sends the window back.
     if (!moveIsSafe(process.argv[3], liveMonitors(), liveWorkspaces())) process.exit(0);
     const lua = silentMove(process.argv[3], process.argv[4]);
     if (!lua || !hyprDispatch(lua)) {
@@ -147,16 +159,17 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  const asked = action === "prepare" ? process.argv[3] : action;
-  // A home that no longer exists is not a home. Opening here beats creating it.
+  const asked = action === "prepare" ? (process.argv[3] ?? "") : action;
+  // A last workspace that no longer exists is gone. Opening here beats creating it.
   const workspace = workspaceSelector(asked) && !workspaceLives(asked, liveWorkspaces()) ? "" : asked;
   const title = `Blip-restore-${randomUUID()}`;
-  if (!hyprEval(restoreRule(workspace, title))) {
+  const [restore, home] = prepareRules(workspace, title);
+  if (!hyprEval(restore)) {
     console.error("Blip could not prepare quiet window restoration");
     process.exit(1);
   }
-  if (workspaceSelector(workspace) && !hyprEval(homeRule(workspace))) {
-    console.error("Blip could not keep the window on its workspace");
+  if (!hyprEval(home)) {
+    console.error("Blip could not clear an old workspace rule");
     process.exit(1);
   }
   console.log(JSON.stringify({ title }));

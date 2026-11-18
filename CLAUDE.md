@@ -496,9 +496,16 @@ what it is handed. Keep it that way.
   BarWidget's `ensureWindow()`/`hideWindow()` toggle the Loader's `active`;
   BlipWindow persists size + was-open in `~/.local/state/blip/window.json`
   and restores on creation. Do not "simplify" this back to `visible`.
-  Idle/DPMS maps a new client on the focused workspace; that is not a new
-  home. Save workspace only from a user `movewindowv2`. Keep a live-title
-  home rule so a remap returns where the window was.
+  Idle/DPMS maps a new client on the focused workspace; that is not a
+  choice. The window's LAST workspace is saved only from a user
+  `movewindowv2` or from where the reader LAUNCHED it (`launchedHere`, set by
+  `ensureWindow()`: it opens on the reader's workspace, never a saved one).
+  A remap Blip did not ask for is sent back there (`return`), and a shell
+  restart restores there through a ONE-SHOT rule on a unique title. There is
+  NO standing workspace rule: the old live-title "home" rule pinned every
+  later launch to a saved workspace, and a saved workspace the reader no
+  longer visited made Blip vanish (2026-11-18). `prepareRules` still writes
+  `blip-session-home` without a workspace, to clear one an older version left.
   With no real screen there is no leader, so no window: Qt's placeholder
   (empty name, 0x0) gets a bar when the last monitor goes, and mapping the
   window then segfaults Hyprland 0.56 (`screen-leader.ts`). Moving it back

@@ -946,19 +946,42 @@ test("window focus is an exact title match, not a prefix", () => {
   expect(win).not.toContain('.indexOf("Blip") === 0');
 });
 
-// Idle remaps a new client onto the focused workspace. Adopting that as home
-// is what made a walk-away move Blip. A user move is the new home; a remap
-// is sent back. Keep in lockstep with workspaceDecision() in window-restore.ts.
+// Idle remaps a new client onto the focused workspace. Adopting that as the
+// last workspace is what made a walk-away move Blip. A user move is remembered;
+// a remap is sent back. Keep in lockstep with workspaceDecision() in window-restore.ts.
 test("idle remaps do not adopt the focused workspace", () => {
   expect(window).not.toContain("savedWorkspace = currentWorkspace; saveWinState()");
   expect(window).toContain('if (reason === "move") return "save"');
   expect(window).toContain('if (reason === "map" || reason === "monitor") return "return"');
-  expect(window).toContain('runRestore("home", savedWorkspace)');
+  // no lock: a remembered workspace installs no standing compositor rule
+  expect(window).not.toContain('runRestore("home"');
   expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
-  expect(window).toContain('["bun", win.restoreScript, "prepare", win.savedWorkspace]');
+  expect(window).toContain('["bun", win.restoreScript, "prepare", win.restoreTarget]');
+  expect(window).toContain("if (wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
   expect(window).toContain("/^Blip( \\([0-9]+\\))?$/.test(title)");
   expect(window).toContain("id: strayReturn");
   expect(window).toContain("sameAddress");
+});
+
+// A window the READER opened is an app being launched, not a remap: it opens
+// on their workspace (no restore target, stale home rule cleared) and that
+// becomes its last workspace. Before, a stale home on a workspace the reader
+// no longer visited swallowed every launch (field report, 2026-11-18).
+test("a launched window opens where the reader is and remembers that workspace", () => {
+  // only ensureWindow (a show someone asked for) marks a launch; startup does not
+  expect(widget).toContain("root.windowLaunchPending = true\n      windowLoader.active = true");
+  expect(widget).toContain("item.launchedHere = root.windowLaunchPending");
+  expect(widget.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(widget.indexOf("item.hostWidget = root"));
+  // decided a turn after creation, once onLoaded has set launchedHere
+  expect(window).toContain("Qt.callLater(function() { win.beginRestore(wasOpen) })");
+  expect(window).toContain('if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }');
+  // the first workspace a launched window lands on is saved as home, once,
+  // before any stray-return logic can send it back
+  const adopt = window.slice(window.indexOf("function adoptLaunchWorkspace("), window.indexOf("function applyWorkspaceDecision("));
+  expect(adopt).toContain("if (!launchedHere || adoptedLaunchWorkspace || restoring || !incoming) return false");
+  expect(adopt).toContain('applyWorkspaceDecision(incoming, "move", addr)');
+  const changed = window.slice(window.indexOf("onCurrentWorkspaceChanged: {"), window.indexOf("id: strayReturn"));
+  expect(changed.indexOf("adoptLaunchWorkspace(currentWorkspace, ourAddress())")).toBeLessThan(changed.indexOf("strayReturn.restart()"));
 });
 
 // Esc over the share sheet closes the sheet; a stale search never stays clickable;
