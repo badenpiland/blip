@@ -12,6 +12,8 @@
 #                                    alone), plus ~/bin/blip-bridged, the persistent-channel
 #                                    daemon the bar widget runs. bin_dir= in bridge.conf, or
 #                                    BLIP_BIN_DIR, installs them elsewhere
+#   3b. app launcher entry           ~/bin/blip-app + blip.desktop + icon, so Blip opens
+#                                    from the app launcher like any other app
 #   4. Mac install                   copies bridge/mac to the Mac and runs
 #                                    install.sh there (needs ssh access already)
 #   5. smoke test                    imsg recent 1 through the shim
@@ -211,6 +213,23 @@ if ! command -v socat >/dev/null 2>&1; then
   echo "• socat not found — Blip will work, but every query pays ~90 ms of startup."
   echo "  Install it for the fast path:  pacman -S socat"
 fi
+
+# 3b. the app launcher entry: "Blip" in the launcher, running blip-app, which
+# focuses the Blip window or asks the plugin to open it (IPC `app`). The icon is
+# ours (share/blip.svg). Installed beside the shims, so the entry never points
+# into a checkout that may move; re-running setup refreshes all three.
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+install -m 0755 "$here/scripts/blip-app" "$bin_dir/blip-app"
+install -D -m 0644 "$here/share/blip.svg" "$data_home/icons/hicolor/scalable/apps/blip.svg"
+mkdir -p "$data_home/applications"
+desktop_tmp="$(mktemp "$data_home/applications/.blip.desktop.XXXXXX")"
+# Exec= takes a path, and a path with a space would need desktop-entry quoting:
+# bin_dir is validated as a plain absolute path above, so it has none to escape.
+sed "s|@BLIP_APP@|$bin_dir/blip-app|" "$here/share/blip.desktop.in" >"$desktop_tmp"
+chmod 0644 "$desktop_tmp"
+mv -f "$desktop_tmp" "$data_home/applications/blip.desktop"
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data_home/applications" 2>/dev/null || true
+echo "✓ app launcher entry installed: Blip ($data_home/applications/blip.desktop → $bin_dir/blip-app)"
 
 # The from= option for the Blip key's authorized_keys line. $1 = the address
 # this machine reached the Mac from. Over Tailscale that address is a stable

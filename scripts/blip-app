@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# blip-app — open Blip like an app: focus its window, or create it.
+#
+#   blip-app            focus the Blip window, creating it if there is none
+#                       (what the app launcher's Blip entry runs)
+#   blip-app --toggle   the same, except an already-FOCUSED window closes
+#                       (what a SUPER+M bind wants)
+#
+# The window lives inside the Omarchy shell (the plugin's BarWidget hosts it),
+# so "launching" asks the shell for it over IPC `app`. Hyprland, not the plugin, says
+# whether a window exists: after an Omarchy plugin update the plugin's IPC can
+# answer from a stale instance until the shell restarts (CLAUDE.md). Match the
+# Quickshell class and the exact app title (`Blip` or `Blip (N)`) so a browser or
+# editor titled "Blip documentation" is never focused or closed by this.
+set -u
+
+toggle=0
+case "${1:-}" in
+  --toggle) toggle=1 ;;
+  "") ;;
+  -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "blip-app: unknown option: $1" >&2; exit 64 ;;
+esac
+
+for tool in hyprctl jq; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "blip-app: $tool not found" >&2; exit 69; }
+done
+
+blip_window() {
+  hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class == "org.quickshell" and (.title | test("^Blip( [(][0-9]+[)])?$"))) | .address' | head -1
+}
+focus() { hyprctl dispatch "hl.dsp.focus({ window = \"address:$1\" })" >/dev/null; }
+
+a=$(blip_window)
+if [ -n "$a" ]; then
+  if [ "$toggle" = 1 ] && [ "$(hyprctl activewindow -j | jq -r .address)" = "$a" ]; then
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null
+  else
+    focus "$a"
+  fi
+  exit 0
+fi
+
+# No window: ask the plugin to create one. A shell without Blip answers with an
+# error or nothing; say so instead of silently waiting.
+if ! out=$(omarchy-shell nixfred.blip app 2>&1) || [ -z "$out" ]; then
+  msg="Blip is not running in the Omarchy shell. Put it on the bar (omarchy plugin enable nixfred.blip), then omarchy-restart-shell."
+  echo "blip-app: $msg${out:+ ($out)}" >&2
+  command -v notify-send >/dev/null 2>&1 && notify-send --app-name=Blip -- "Blip" "$msg"
+  exit 69
+fi
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  a=$(blip_window); [ -n "$a" ] && break; sleep 0.15
+done
+[ -n "$a" ] && focus "$a"
+exit 0

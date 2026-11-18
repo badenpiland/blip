@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Blip
+GenericName=Messages
+Comment=iMessage on Linux, through your Mac
+Exec=@BLIP_APP@
+Icon=blip
+Terminal=false
+# The window belongs to the Omarchy shell's own process (class org.quickshell),
+# so no new client ever matches this entry: startup notification would spin.
+StartupNotify=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=iMessage;SMS;Messages;Texts;Chat;
