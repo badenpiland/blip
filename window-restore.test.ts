@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   hasRealMonitor,
+  clearHomeRule,
   moveIsSafe,
+  prepareRules,
   workspaceLives,
   homeRule,
   isLiveBlipTitle,
@@ -26,8 +28,19 @@ test("quiet mapping applies only to the unique restoration window", () => {
   expect(rule).toContain('title = "^Blip-restore-abcd-1234$"');
   expect(rule).toContain("no_initial_focus = true");
   expect(rule).toContain(`workspace = ${luaString("7 silent")}`);
+  expect(rule).toContain('name = "blip-session-restore", enabled = true');
   expect(restoreRule(undefined, "Blip-restore-abcd")).not.toContain("workspace =");
   expect(() => restoreRule("2", 'Blip"')).toThrow();
+});
+// Hyprland 0.56 merges a re-declared named rule, so a restore with no target
+// that only omitted `workspace` kept the previous restore's workspace: a launch
+// opened on the last workspace (real machine, 2026-11-18). No target = rule off.
+test("a restore with no target turns the restore rule off instead of inheriting a workspace", () => {
+  for (const target of ["", undefined, null]) {
+    const rule = restoreRule(target, "Blip-restore-abcd");
+    expect(rule).toContain('name = "blip-session-restore", enabled = false');
+    expect(rule).not.toContain("workspace =");
+  }
 });
 test("workspace names cannot inject Lua", () => {
   expect(luaString('"\\\n')).toBe('"\\034\\092\\010"');
@@ -112,4 +125,41 @@ test("a floating move waits until the target workspace has a live monitor", () =
   expect(moveIsSafe("1", [{ name: "FALLBACK", width: 1920, height: 1080 }], orphaned)).toBe(false);
   expect(moveIsSafe("1", dp1, null)).toBe(false);
   expect(moveIsSafe("", dp1, homed)).toBe(false);
+});
+
+// Hyprland 0.56 MERGES a re-declared named rule (probed 2026-11-18): leaving
+// `workspace` out kept the old one in force, and only `enabled = false` turned
+// it off. So the home rule is installed with `enabled = true` and cleared with
+// `enabled = false`, never by omitting the workspace.
+test("the home rule is installed explicitly enabled and cleared explicitly disabled", () => {
+  const home = homeRule("4");
+  expect(home).toContain('name = "blip-session-home", enabled = true');
+  expect(home).toContain("workspace =");
+  const clear = clearHomeRule();
+  expect(clear).toContain('name = "blip-session-home", enabled = false');
+  expect(clear).not.toContain("workspace =");
+  expect(homeRule(undefined)).toBe(clear);       // nothing to pin to: off
+  expect(homeRule("")).toBe(clear);
+});
+
+test("a restore keeps home by default, and window_workspace=current turns it off", () => {
+  // default: as Blip always did, the restored workspace stays home
+  expect(prepareRules("4", "Blip-restore-abcd")).toEqual([restoreRule("4", "Blip-restore-abcd"), homeRule("4")]);
+  expect(prepareRules("", "Blip-restore-abcd")).toEqual([restoreRule("", "Blip-restore-abcd")]);
+  // current: the one-shot restore rule only, and any standing home rule off
+  for (const target of ["", "4", "work", undefined]) {
+    const [restore, home] = prepareRules(target, "Blip-restore-abcd", false);
+    expect(restore).toContain('title = "^Blip-restore-abcd$"');
+    expect(home).toBe(clearHomeRule());
+  }
+});
+
+// A remap returns the window only to a workspace that still exists: moving to a
+// gone one CREATES it, and a recreated named workspace the reader cannot reach
+// is the "vanished" window again, through the screen-wake door.
+test("a remap never recreates a workspace that is gone", () => {
+  const src = require("node:fs").readFileSync(new URL("./window-restore.ts", import.meta.url), "utf8");
+  const ret = src.slice(src.indexOf('if (action === "return") {'), src.indexOf("const lua = silentMove(args[3], args[4]);"));
+  expect(ret).toContain("if (!workspaceLives(args[3], workspaces)) process.exit(0);");
+  expect(ret.indexOf("moveIsSafe(")).toBeLessThan(ret.indexOf("workspaceLives("));
 });

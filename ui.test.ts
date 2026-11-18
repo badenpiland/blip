@@ -946,19 +946,60 @@ test("window focus is an exact title match, not a prefix", () => {
   expect(win).not.toContain('.indexOf("Blip") === 0');
 });
 
-// Idle remaps a new client onto the focused workspace. Adopting that as home
-// is what made a walk-away move Blip. A user move is the new home; a remap
-// is sent back. Keep in lockstep with workspaceDecision() in window-restore.ts.
+// Idle remaps a new client onto the focused workspace. Adopting that as the
+// last workspace is what made a walk-away move Blip. A user move is remembered;
+// a remap is sent back. Keep in lockstep with workspaceDecision() in window-restore.ts.
 test("idle remaps do not adopt the focused workspace", () => {
   expect(window).not.toContain("savedWorkspace = currentWorkspace; saveWinState()");
   expect(window).toContain('if (reason === "move") return "save"');
   expect(window).toContain('if (reason === "map" || reason === "monitor") return "return"');
-  expect(window).toContain('runRestore("home", savedWorkspace)');
+  // the default keeps Blip's home rule; window_workspace=current only remembers
+  expect(window).toContain('if (homeLock && savedWorkspace !== "") runRestore("home", savedWorkspace)');
   expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
-  expect(window).toContain('["bun", win.restoreScript, "prepare", win.savedWorkspace]');
+  expect(window).toContain('["bun", win.restoreScript, "prepare", win.restoreTarget]');
+  expect(window).toContain("if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
   expect(window).toContain("/^Blip( \\([0-9]+\\))?$/.test(title)");
   expect(window).toContain("id: strayReturn");
   expect(window).toContain("sameAddress");
+});
+
+// A window the READER opened is an app being launched, not a remap: it opens
+// on their workspace (no restore target, stale home rule cleared) and that
+// becomes its last workspace. Before, a stale home on a workspace the reader
+// no longer visited swallowed every launch (field report, 2026-11-18).
+test("a launched window opens where the reader is and remembers that workspace", () => {
+  // only ensureWindow (a show someone asked for) marks a launch, and only with
+  // window_workspace=current; startup never does. The flag is consumed by the
+  // load itself (onLoaded) or dropped on a failed load — never cleared right
+  // after `active = true`, which ran BEFORE onLoaded on a real machine and
+  // turned every launch into a remap sent back to the last workspace.
+  expect(widget).toContain("root.windowLaunchPending = true\n      windowLoader.active = true");
+  const ensure = widget.slice(widget.indexOf("function ensureWindow() {"), widget.indexOf("function toggleWindow()"));
+  expect(ensure).not.toContain("root.windowLaunchPending = false");
+  expect(widget).toContain("onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false");
+  expect(widget).toContain("item.launchedHere = root.windowLaunchPending");
+  expect(widget.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(widget.indexOf("item.hostWidget = root"));
+  // decided only after the host handed over launchedHere/homeLock: onLoaded
+  // sets hostWidget LAST, and the Loader can finish after any callLater from
+  // the window's own onCompleted (real machine, 2026-11-18)
+  expect(window).not.toContain("Qt.callLater(function() { win.beginRestore(wasOpen) })");
+  expect(window).toContain("onHostWidgetChanged: if (hostWidget && restoreWaiting) Qt.callLater(win.startRestore)");
+  expect(window).toContain("if (win.hostWidget) Qt.callLater(win.startRestore)");
+  expect(window).toContain("Timer { id: restoreFallback; interval: 1000; onTriggered: win.startRestore() }");
+  const loaded = widget.slice(widget.indexOf("onLoaded: {", widget.indexOf("id: windowLoader")), widget.indexOf("property bool windowLaunchPending"));
+  expect(loaded.indexOf("item.launchedHere")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
+  expect(loaded.indexOf("item.homeLock")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
+  expect(window).toContain('if (launchedHere && !homeLock) { restoreTarget = ""; prepareRestore.running = true; return }');
+  // the default mode launches through the restore path too, onto its home,
+  // reinstalling the home rule, instead of relying on a leftover rule
+  expect(window).toContain("if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }");
+  // the first workspace a launched window lands on is saved as home, once,
+  // before any stray-return logic can send it back
+  const adopt = window.slice(window.indexOf("function adoptLaunchWorkspace("), window.indexOf("function applyWorkspaceDecision("));
+  expect(adopt).toContain("if (!launchedHere || homeLock || adoptedLaunchWorkspace || restoring || !incoming) return false");
+  expect(adopt).toContain('applyWorkspaceDecision(incoming, "move", addr)');
+  const changed = window.slice(window.indexOf("onCurrentWorkspaceChanged: {"), window.indexOf("id: strayReturn"));
+  expect(changed.indexOf("adoptLaunchWorkspace(currentWorkspace, ourAddress())")).toBeLessThan(changed.indexOf("strayReturn.restart()"));
 });
 
 // Esc over the share sheet closes the sheet; a stale search never stays clickable;
@@ -1305,3 +1346,25 @@ describe("a signed-out Mac is said before a send fails (reads work, sends cannot
   });
 });
 
+
+// Blip's original window behaviour stays the default; `window_workspace=current`
+// in bridge.conf opts into "opens where you are, stays where you put it".
+describe("window_workspace: home by default, current on request", () => {
+  test("parsed from bridge.conf like every other key, off when unreadable", () => {
+    expect(widget).toContain("root.windowWorkspaceCurrent = /^\\s*window_workspace\\s*=\\s*['\"]?current\\b/mi.test(t)");
+    expect(widget).toContain("root.windowWorkspaceCurrent = false;");
+    expect(widget).toContain("property bool windowWorkspaceCurrent: false");
+  });
+  test("the window learns its mode before it decides anything", () => {
+    const loaded = widget.slice(widget.indexOf("id: windowLoader"), widget.indexOf("property bool windowLaunchPending"));
+    expect(loaded.indexOf("item.homeLock = !root.windowWorkspaceCurrent")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
+    expect(window).toContain("property bool homeLock: true");
+    expect(window).toContain('.concat(win.homeLock ? [] : ["--no-home"])');
+  });
+  test("switching to current turns the standing home rule off at once", () => {
+    expect(widget).toContain('"window-restore.ts").toString().replace(/^file:\\/\\//, "")), "clear"])');
+  });
+  test("status says when the option is on", () => {
+    expect(widget).toContain('(root.windowWorkspaceCurrent ? " window_workspace=current" : "")');
+  });
+});

@@ -66,13 +66,30 @@ FloatingWindow {
   // omarchy-restart-shell (every plugin deploy/update) would kill it. Remember
   // "was open", size and workspace in window.json; restore quietly on start.
   // Idle/DPMS remaps as a new client on the focused workspace — that is not a
-  // new home. Only a user move updates savedWorkspace; a remap is sent back.
+  // choice. savedWorkspace is the LAST workspace the reader put it on (a user
+  // move, or, with window_workspace=current, where they launched it); a remap
+  // Blip did not ask for is sent back there, and nothing moves the window
+  // while it is in use. By default it is also the window's HOME (homeLock).
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/blip"
   readonly property string restoreScript: Qt.resolvedUrl("window-restore.ts").toString().replace(/^file:\/\//, "")
   property bool restoring: true
   property bool restoreReady: false
   property bool explicitShow: false
   property string savedWorkspace: ""
+  // Set by BarWidget when the READER opened this window (launcher, SUPER+M,
+  // double-click, a toast). With window_workspace=current it opens on the
+  // workspace they are looking at, which becomes its last workspace, like any
+  // app; by default it opens on its home (beginRestore). Only a window the
+  // shell brings back on its own (startup restore, a screen remap) is "sent
+  // back" (field report, 2026-11-18).
+  property bool launchedHere: false
+  // Blip's original behaviour, the default: a standing compositor rule sends
+  // every new Blip window to its home workspace. false with
+  // `window_workspace=current` (set by BarWidget): the last workspace is only
+  // remembered, for restores and remaps.
+  property bool homeLock: true
+  property bool adoptedLaunchWorkspace: false
+  property string restoreTarget: ""
   // Match this shell process and this exact window, never another app's title.
   readonly property var ownToplevel: Hyprland.toplevels.values.find(function(t) {
     return Number(t.lastIpcObject.pid) === Quickshell.processId && t.title === win.title
@@ -117,13 +134,23 @@ FloatingWindow {
     }
     return false
   }
+  /** A launched window's first workspace is a deliberate choice: remember it. */
+  function adoptLaunchWorkspace(incoming, addr) {
+    if (!launchedHere || homeLock || adoptedLaunchWorkspace || restoring || !incoming) return false
+    adoptedLaunchWorkspace = true
+    applyWorkspaceDecision(incoming, "move", addr)
+    return true
+  }
   function applyWorkspaceDecision(incoming, reason, addr) {
     if (restoring) return
     var decision = workspaceDecision(incoming, reason)
     if (decision === "save") {
       savedWorkspace = incoming
       saveWinState()
-      if (savedWorkspace !== "") runRestore("home", savedWorkspace)
+      // The default keeps it as HOME: a standing rule sends every new Blip
+      // window there. With window_workspace=current it is remembered only,
+      // for a shell restart or a screen remap.
+      if (homeLock && savedWorkspace !== "") runRestore("home", savedWorkspace)
     } else if (decision === "return" && savedWorkspace !== "" && hasRealScreen()) {
       runRestore("return", savedWorkspace, addr || ourAddress())
     }
@@ -138,7 +165,8 @@ FloatingWindow {
       if (name === "openwindow") {
         var open = win.eventParts(event, 4)
         var title = String(open[3] || "")
-        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title))
+        if (String(open[2] || "") === "org.quickshell" && /^Blip( \([0-9]+\))?$/.test(title)
+            && !win.adoptLaunchWorkspace(String(open[1] || ""), String(open[0] || "")))
           win.applyWorkspaceDecision(String(open[1] || ""), "map", String(open[0] || ""))
       } else if (name === "movewindowv2") {
         var moved = win.eventParts(event, 3)
@@ -153,6 +181,7 @@ FloatingWindow {
   }
   onCurrentWorkspaceChanged: {
     if (restoring || currentWorkspace === "") return
+    if (adoptLaunchWorkspace(currentWorkspace, ourAddress())) return
     if (savedWorkspace === "") applyWorkspaceDecision(currentWorkspace, "map", ourAddress())
     else if (currentWorkspace !== savedWorkspace) strayReturn.restart()
   }
@@ -174,7 +203,7 @@ FloatingWindow {
   }
   Process {
     id: prepareRestore
-    command: ["bun", win.restoreScript, "prepare", win.savedWorkspace]
+    command: ["bun", win.restoreScript, "prepare", win.restoreTarget].concat(win.homeLock ? [] : ["--no-home"])
     stdout: StdioCollector {
       onStreamFinished: {
         try { win.restorationTitle = JSON.parse(text).title || "" } catch (e) { }
@@ -205,13 +234,47 @@ FloatingWindow {
       "blip", stateDir, j])
   }
   Component.onCompleted: {
+    var wasOpen = false
     try {
       var d = JSON.parse(winState.text())
       if (d && d.width >= 720 && d.height >= 480) { implicitWidth = d.width; implicitHeight = d.height }
       if (d && typeof d.workspace === "string") savedWorkspace = d.workspace
-      if (d && d.visible === true) { prepareRestore.running = true; return }
+      wasOpen = !!d && d.visible === true
     } catch (e) { /* first run */ }
-    Qt.callLater(function() { win.restoring = false; win.restoreReady = true; if (win.explicitShow) win.visible = true })
+    win.wasOpenAtStart = wasOpen
+    win.restoreWaiting = true
+    // Decided only once BarWidget has handed over launchedHere and homeLock.
+    // It does so in the Loader's onLoaded, hostWidget LAST, and that can come
+    // after this handler AND after a callLater from here: the Loader finishes
+    // asynchronously on a real machine, and a decision made first took every
+    // launch for a remap (2026-11-18). No hostWidget within a second (a host
+    // that never sets one): decide anyway, as before.
+    if (win.hostWidget) Qt.callLater(win.startRestore)
+    else restoreFallback.start()
+  }
+  property bool wasOpenAtStart: false
+  property bool restoreWaiting: false
+  function startRestore() {
+    if (!restoreWaiting) return
+    restoreWaiting = false
+    restoreFallback.stop()
+    beginRestore(wasOpenAtStart)
+  }
+  onHostWidgetChanged: if (hostWidget && restoreWaiting) Qt.callLater(win.startRestore)
+  Timer { id: restoreFallback; interval: 1000; onTriggered: win.startRestore() }
+  function beginRestore(wasOpen) {
+    // window_workspace=current, a launch: open where the reader is (no
+    // target), the home rule off, through the quiet path so the window maps
+    // under a restore title no old rule can match.
+    if (launchedHere && !homeLock) { restoreTarget = ""; prepareRestore.running = true; return }
+    // The default (home), a launch OR a restore: open on the home workspace
+    // through the same path, which also (re)installs the home rule. A launch
+    // used to map plainly and rely on a home rule left in the compositor;
+    // with none (after a Hyprland restart, or a switch back from `current`)
+    // it mapped where the reader was and the stray return then moved it home
+    // WITHOUT them, so it vanished (real machine, 2026-11-18).
+    if (launchedHere || wasOpen) { restoreTarget = savedWorkspace; prepareRestore.running = true; return }
+    restoring = false; restoreReady = true; if (explicitShow) visible = true
   }
   onVisibleChanged: { saveWinState(); if (visible) Qt.callLater(view.focusDefault) }
   onWidthChanged: if (visible) saveWinState()

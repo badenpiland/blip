@@ -41,6 +41,8 @@ avatar.ts                           handle → ~/.cache/blip/avatars (imsg avata
 paste.ts                            clipboard snapshot → draft image in $XDG_RUNTIME_DIR/blip or text.
 toast-allowlist.ts                  local allowlist load/set helper; bounded JSON stdin, atomic private writes.
 BarWidget.qml                       the single poller, badge, toasts, IPC.
+scripts/blip-app                    the launcher entry's command: focus the window or ask IPC `app` for it;
+                                    blip-setup installs it with share/blip.desktop.in + share/blip.svg.
 Panel.qml                           list view + conversation view + compose. Renders only.
 manifest.json                       plugin id nixfred.blip
 ```
@@ -368,7 +370,7 @@ what it is handed. Keep it that way.
   config file (`~/.config/blip/bridge.conf`, parsed not sourced) carrying
   `host`, `remote_bin`, `automation`, `ui_font_size`, `ui_font_theme`,
   `link_previews`, `push_read`, `hide_spam`, `hide_unknown`, `prefer_imessage`, `tapbacks`,
-  `scroll_gain`, `touchpad_scroll_gain`, `smooth_scroll`, plus the mute list. Anything worth configuring
+  `scroll_gain`, `touchpad_scroll_gain`, `smooth_scroll`, `window_workspace`, plus the mute list. Anything worth configuring
   becomes another key. Settled 2026-09-04 against PR #21, which proposed a
   `preferences.json` with eleven knobs and a ~1300-line settings panel: it was
   careful work (atomic, 0600, ownership and size validated) and was still the
@@ -496,9 +498,27 @@ what it is handed. Keep it that way.
   BarWidget's `ensureWindow()`/`hideWindow()` toggle the Loader's `active`;
   BlipWindow persists size + was-open in `~/.local/state/blip/window.json`
   and restores on creation. Do not "simplify" this back to `visible`.
-  Idle/DPMS maps a new client on the focused workspace; that is not a new
-  home. Save workspace only from a user `movewindowv2`. Keep a live-title
-  home rule so a remap returns where the window was.
+  Idle/DPMS maps a new client on the focused workspace; that is not a
+  choice. Two behaviours, chosen by `window_workspace` in bridge.conf:
+  `home` (DEFAULT, Fred's original design) saves the workspace only from a
+  user `movewindowv2` and keeps a live-title "home" rule (`blip-session-home`)
+  so every new Blip window maps there, and a LAUNCH goes through the restore
+  path onto home (reinstalling the rule) instead of trusting a rule left in
+  the compositor: with none, it mapped where the reader was and the stray
+  return moved it home without them; `current` (opt-in) also saves where the
+  reader LAUNCHED it (`launchedHere`, set by `ensureWindow()`: it opens on the
+  reader's workspace), and turns the home rule OFF (`homeLock` false,
+  `prepare --no-home`, `clear` on switching). In both, a remap Blip did not ask
+  for is sent back (`return`) only to a workspace that still EXISTS
+  (`workspaceLives`): moving to a gone one recreates it, and a recreated named
+  workspace the reader cannot reach made Blip vanish (2026-11-18). Hyprland
+  0.56 MERGES a rule re-declared under the same name (probed 2026-11-18:
+  leaving `workspace` out kept the old one), so the home rule is installed with
+  `enabled = true` and cleared with `enabled = false`, never by omission. The
+  one-shot `blip-session-restore` rule has a fixed name too: a restore with no
+  target turns it OFF rather than omitting `workspace`, or it inherits the
+  previous restore's workspace (a launch opened on the last workspace, found
+  by logging `launchedHere` on a real machine, 2026-11-18).
   With no real screen there is no leader, so no window: Qt's placeholder
   (empty name, 0x0) gets a bar when the last monitor goes, and mapping the
   window then segfaults Hyprland 0.56 (`screen-leader.ts`). Moving it back

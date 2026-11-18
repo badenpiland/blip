@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Blip in the app launcher.** `blip-setup` installs a **Blip** entry with its own icon, running `~/bin/blip-app`:
+  focus the Blip window, or ask the plugin to open it. `blip-app --toggle` is the `SUPER+M` behaviour. The bar icon
+  still opens the popout; the launcher is the window's way in, like any app.
+- **`window_workspace=current` (opt-in): the window behaves like any app.** It opens on the workspace you are on
+  (launcher, `SUPER+M`, double-click, ⇱, a toast), Blip never moves it while you use it, and it only goes back to the
+  last workspace you put it on after a shell restart or a screen-wake remap. The standing "home" compositor rule is
+  turned off. The default (`home`) is unchanged: the window keeps its home workspace, as before.
+- **Fixes in both modes.** A screen-wake remap no longer recreates a workspace that is gone (with a named workspace
+  you no longer reach, the window seemed to vanish). The home rule is installed and cleared with an explicit
+  `enabled`, because Hyprland 0.56 merges a rule declared again under the same name. `blip-app` tells you to restart
+  the shell when the plugin answers but no window opens (the stale IPC after an update). The launcher step in
+  `blip-setup` is optional: a failure warns and setup carries on, and someone else's `~/bin/blip-app` is backed up.
+- **Before you update:** re-run `blip-setup` for the launcher entry, then `omarchy-restart-shell`.
+
 ## 2.7.0 - 2026-11-17 - any-emoji reactions, native replies, stickers and voice messages
 
 Everything since 2.6.2: 200 commits from 22 people and 42 merged pull requests. The big pieces are reactions with any

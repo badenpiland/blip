@@ -446,8 +446,32 @@ BarWidget {
     id: windowLoader
     active: root.leader                // created at start so it can self-restore
     source: Qt.resolvedUrl("BlipWindow.qml")
-    onLoaded: item.hostWidget = root
+    // The flag is consumed when the window LOADS, which is not necessarily
+    // within ensureWindow(): clearing it right after `active = true` cleared
+    // it before onLoaded read it, so a launch was taken for a remap and sent
+    // back to the last workspace (real machine, 2026-11-18). A window that
+    // fails to load clears it here, so it never carries over to the next one.
+    onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false
+    onLoaded: {
+      // A window created for a show the reader asked for opens on THEIR
+      // workspace; one created by the shell itself (startup) restores.
+      item.homeLock = !root.windowWorkspaceCurrent
+      item.launchedHere = root.windowLaunchPending
+      root.windowLaunchPending = false
+      item.hostWidget = root
+    }
   }
+  property bool windowLaunchPending: false
+  /** `window_workspace=current` in bridge.conf: the app window opens on the
+   *  workspace the reader is on and stays wherever they put it, like any app.
+   *  The default (`home`) keeps Blip's original behaviour: the window lives on
+   *  a home workspace (the last one the reader moved it to), opening it goes
+   *  there, and a standing compositor rule sends every new Blip window home.
+   *  Switching to `current` turns that rule off at once (window-restore.ts
+   *  `clear`); switching back installs it on the next move. */
+  property bool windowWorkspaceCurrent: false
+  onWindowWorkspaceCurrentChanged: if (windowWorkspaceCurrent)
+    Quickshell.execDetached(["bun", decodeURIComponent(Qt.resolvedUrl("window-restore.ts").toString().replace(/^file:\/\//, "")), "clear"])
   readonly property bool windowVisible: windowLoader.item ? windowLoader.item.visible === true : false
   function hideWindow() {
     if (!windowLoader.item) return
@@ -460,6 +484,10 @@ BarWidget {
     // covers a window the compositor closed (SUPER+M hide path).
     if (windowLoader.item && !windowLoader.item.visible) windowLoader.active = false
     if (!windowLoader.active) {
+      // A show the reader asked for. With window_workspace=current it opens
+      // where they are; by default it opens on its home (BlipWindow
+      // beginRestore), as Blip always intended.
+      root.windowLaunchPending = true
       windowLoader.active = true
       root.refresh(true, false)          // full list, like the panel
     }
@@ -1272,11 +1300,12 @@ BarWidget {
       root.scrollGain = root.parseGain(t, /^\s*scroll_gain\s*=\s*['"]?(\d*\.?\d+)/mi)
       root.touchpadScrollGain = root.parseGain(t, /^\s*touchpad_scroll_gain\s*=\s*['"]?(\d*\.?\d+)/mi)
       root.smoothScroll = /^\s*smooth_scroll\s*=\s*['"]?(on|true|1|yes)\b/mi.test(t)
+      root.windowWorkspaceCurrent = /^\s*window_workspace\s*=\s*['"]?current\b/mi.test(t)
       root.tapbacks = TapbackActions.tapbacksOn(t)
       root.replies = TapbackActions.repliesOn(t)
       root.bridgeConfLoaded = true
     }
-    onLoadFailed: { root.replies = false; root.otpAutofill = false; root.automationOn = false; root.uiFontTheme = false; root.uiFontSize = 0; root.scrollGain = 1.0; root.touchpadScrollGain = 1.0; root.smoothScroll = false; root.tapbacks = false; root.binDir = root.home + "/bin"; root.bridgeConfLoaded = true }
+    onLoadFailed: { root.replies = false; root.otpAutofill = false; root.automationOn = false; root.uiFontTheme = false; root.uiFontSize = 0; root.scrollGain = 1.0; root.touchpadScrollGain = 1.0; root.smoothScroll = false; root.windowWorkspaceCurrent = false; root.tapbacks = false; root.binDir = root.home + "/bin"; root.bridgeConfLoaded = true }
   }
   IpcHandler {
     target: root.moduleName
@@ -1287,6 +1316,7 @@ BarWidget {
         + " window=" + (w && w.visible ? (w.focused ? "focused" : "unfocused") : "hidden")
         + " threads=" + root.threads.length + " healthy=" + root.healthy
         + " watch=" + root.watchAlive
+        + (root.windowWorkspaceCurrent ? " window_workspace=current" : "")
         + " read_push=" + (root.readPush !== "" ? root.readPush : "?")
         + (root.macSession === "signed-out" ? " mac_session=signed-out" : "")
         + " autofill=" + (root.otpAutofill ? (otp.ready ? "ready" : "starting") : "off")
