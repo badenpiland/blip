@@ -979,8 +979,16 @@ test("a launched window opens where the reader is and remembers that workspace",
   expect(widget).toContain("onStatusChanged: if (status === Loader.Error) root.windowLaunchPending = false");
   expect(widget).toContain("item.launchedHere = root.windowLaunchPending");
   expect(widget.indexOf("item.launchedHere = root.windowLaunchPending")).toBeLessThan(widget.indexOf("item.hostWidget = root"));
-  // decided a turn after creation, once onLoaded has set launchedHere
-  expect(window).toContain("Qt.callLater(function() { win.beginRestore(wasOpen) })");
+  // decided only after the host handed over launchedHere/homeLock: onLoaded
+  // sets hostWidget LAST, and the Loader can finish after any callLater from
+  // the window's own onCompleted (real machine, 2026-11-18)
+  expect(window).not.toContain("Qt.callLater(function() { win.beginRestore(wasOpen) })");
+  expect(window).toContain("onHostWidgetChanged: if (hostWidget && restoreWaiting) Qt.callLater(win.startRestore)");
+  expect(window).toContain("if (win.hostWidget) Qt.callLater(win.startRestore)");
+  expect(window).toContain("Timer { id: restoreFallback; interval: 1000; onTriggered: win.startRestore() }");
+  const loaded = widget.slice(widget.indexOf("onLoaded: {", widget.indexOf("id: windowLoader")), widget.indexOf("property bool windowLaunchPending"));
+  expect(loaded.indexOf("item.launchedHere")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
+  expect(loaded.indexOf("item.homeLock")).toBeLessThan(loaded.indexOf("item.hostWidget = root"));
   expect(window).toContain('if (launchedHere) { restoreTarget = ""; prepareRestore.running = true; return }');
   // the first workspace a launched window lands on is saved as home, once,
   // before any stray-return logic can send it back

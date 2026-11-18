@@ -242,10 +242,27 @@ FloatingWindow {
       if (d && typeof d.workspace === "string") savedWorkspace = d.workspace
       wasOpen = !!d && d.visible === true
     } catch (e) { /* first run */ }
-    // Decided a turn later: BarWidget sets launchedHere in the Loader's
-    // onLoaded, which runs after this handler.
-    Qt.callLater(function() { win.beginRestore(wasOpen) })
+    win.wasOpenAtStart = wasOpen
+    win.restoreWaiting = true
+    // Decided only once BarWidget has handed over launchedHere and homeLock.
+    // It does so in the Loader's onLoaded, hostWidget LAST, and that can come
+    // after this handler AND after a callLater from here: the Loader finishes
+    // asynchronously on a real machine, and a decision made first took every
+    // launch for a remap (2026-11-18). No hostWidget within a second (a host
+    // that never sets one): decide anyway, as before.
+    if (win.hostWidget) Qt.callLater(win.startRestore)
+    else restoreFallback.start()
   }
+  property bool wasOpenAtStart: false
+  property bool restoreWaiting: false
+  function startRestore() {
+    if (!restoreWaiting) return
+    restoreWaiting = false
+    restoreFallback.stop()
+    beginRestore(wasOpenAtStart)
+  }
+  onHostWidgetChanged: if (hostWidget && restoreWaiting) Qt.callLater(win.startRestore)
+  Timer { id: restoreFallback; interval: 1000; onTriggered: win.startRestore() }
   function beginRestore(wasOpen) {
     // A launch: open where the reader is (no target), clearing any stale home
     // rule, through the same quiet path so the window maps under a restore
